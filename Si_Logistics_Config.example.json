@@ -1,0 +1,44 @@
+{
+  "Enabled": true,
+  "Debug": false,
+  "TransportUnits": [
+    "Shuttle",
+    "Dropship",
+    "Squad Transport",
+    "Platoon Hauler"
+  ],
+  "AirCargoCapacity": 9000,
+  "GroundCargoCapacity": 3000,
+  "LoadUnitsPerSecond": 300,
+  "UnloadUnitsPerSecond": 300,
+  "LoadRadius": 40.0,
+  "UnloadRadius": 65.0,
+  "DeliveryCooldownSeconds": 20.0,
+  "PersonalBonus": {
+    "Enabled": true,
+    "Share": 0.1,
+    "HarvesterDepositShare": 0.2,
+    "HarvesterTransferShare": 0.1,
+    "PayoutDelaySeconds": 20.0,
+    "MinBatch": 100,
+    "AnnounceToPlayer": true
+  },
+  "Chat": {
+    "ProgressIntervalSeconds": 3.0,
+    "ProgressBarLength": 10,
+    "BarFilled": "#",
+    "BarEmpty": "-"
+  },
+  "Sounds": {
+    "Enabled": false,
+    "OnFull": "logistics_ding.wav",
+    "OnLoad": "logistics_tick.wav"
+  },
+  "Commands": {
+    "PlayerCommand": "logistics",
+    "Aliases": [
+      "logi"
+    ],
+    "HideFromChat": true
+  }
+}
