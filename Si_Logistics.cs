@@ -9,7 +9,7 @@ using Newtonsoft.Json;
 using SilicaAdminMod;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(Si_Logistics.LogisticsMod), "Harvester Logistics Prototype", "0.4.1", "Silica community prototype")]
+[assembly: MelonInfo(typeof(Si_Logistics.LogisticsMod), "Harvester Logistics Prototype", "0.5.4", "Silica community prototype")]
 [assembly: MelonGame("Bohemia Interactive", "Silica")]
 [assembly: MelonOptionalDependencies("Admin Mod")]
 
@@ -36,6 +36,8 @@ namespace Si_Logistics
         public ChatConfig Chat = new ChatConfig();
         public SoundConfig Sounds = new SoundConfig();
         public CommandConfig Commands = new CommandConfig();
+        [JsonProperty("harvesterfix")]
+        public HarvesterFixConfig HarvesterFix = new HarvesterFixConfig();
 
         public sealed class CommandConfig
         {
@@ -152,6 +154,7 @@ namespace Si_Logistics
                 if (!string.IsNullOrWhiteSpace(name) && !unique.Exists(n => n.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase)))
                     unique.Add(name.Trim());
             Cfg.TransportUnits = unique;
+            ValidateHarvesterFixConfig();
         }
 
         private static float ValidRewardShare(float? value, float fallback)
@@ -181,6 +184,8 @@ namespace Si_Logistics
         {
             InstallHarvesterRewards();
             BindRewardEvents();
+            InstallHarvesterFix();
+            HelperMethods.RegisterPlayerCommand("harvesterfix", OnHarvesterFixCommand, Cfg.Commands.HideFromChat);
             // AdminMod's command lists exist only after its own initialization.
             var names = new List<string> { Cfg.Commands.PlayerCommand };
             names.AddRange(Cfg.Commands.Aliases);
@@ -287,6 +292,7 @@ namespace Si_Logistics
         public override void OnUpdate()
         {
             if (!Game.GetIsServer()) return;
+            UpdateHarvesterFix();
             // Earned rewards still mature if an admin disables new transfers/bonuses.
             try { PayDueRewards(); }
             catch (Exception exception) { MelonLogger.Warning("Logistics payout: " + exception.Message); }
@@ -421,6 +427,7 @@ namespace Si_Logistics
                 cargo.Amount += removed;
                 if (removed > 0)
                 {
+                    HarvesterTransportPickup(harvester);
                     if (transportDriver != null) QueueReward(harvesterDriver, removed, rewardRate, rewardEpoch);
                     SetTransfer(transport, cargo, "Loading", 0, CapacityFor(transport));
                     Progress(transport, cargo);
