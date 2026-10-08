@@ -9,7 +9,7 @@ using Newtonsoft.Json;
 using SilicaAdminMod;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(Si_Logistics.LogisticsMod), "Harvester Logistics Prototype", "0.5.4", "Silica community prototype")]
+[assembly: MelonInfo(typeof(Si_Logistics.LogisticsMod), "Harvester Logistics Prototype", "0.6.3", "Silica community prototype")]
 [assembly: MelonGame("Bohemia Interactive", "Silica")]
 [assembly: MelonOptionalDependencies("Admin Mod")]
 
@@ -24,6 +24,8 @@ namespace Si_Logistics
         // true = 0.3.x diagnostics: vehicle names, a 5 s nearest-harvester/refinery probe and one
         // LOAD/UNLOAD line per second. Off: one log line per finished load or delivery.
         public bool Debug = false;
+        [JsonProperty("AItransport")]
+        public AITransportConfig AITransport = new AITransportConfig();
         public List<string> TransportUnits = new List<string> { "Shuttle", "Dropship", "Squad Transport", "Platoon Hauler" };
         public int AirCargoCapacity = 9000;
         public int GroundCargoCapacity = 3000;
@@ -155,6 +157,10 @@ namespace Si_Logistics
                     unique.Add(name.Trim());
             Cfg.TransportUnits = unique;
             ValidateHarvesterFixConfig();
+            if (Cfg.AITransport == null) Cfg.AITransport = new AITransportConfig();
+            Cfg.AITransport.DropshipLoadRadius = ValidHarvestSetting(Cfg.AITransport.DropshipLoadRadius, 150f, 1f, 2000f);
+            Cfg.AITransport.DropshipUnloadRadius = ValidHarvestSetting(Cfg.AITransport.DropshipUnloadRadius, 150f, 1f, 2000f);
+            if (!Cfg.AITransport.Enabled) ResetAITransports(true);
         }
 
         private static float ValidRewardShare(float? value, float fallback)
@@ -185,6 +191,8 @@ namespace Si_Logistics
             InstallHarvesterRewards();
             BindRewardEvents();
             InstallHarvesterFix();
+            InstallAITransport();
+            HelperMethods.RegisterPlayerCommand("aitransport", OnAITransportCommand, Cfg.Commands.HideFromChat);
             HelperMethods.RegisterPlayerCommand("harvesterfix", OnHarvesterFixCommand, Cfg.Commands.HideFromChat);
             // AdminMod's command lists exist only after its own initialization.
             var names = new List<string> { Cfg.Commands.PlayerCommand };
@@ -296,7 +304,8 @@ namespace Si_Logistics
             // Earned rewards still mature if an admin disables new transfers/bonuses.
             try { PayDueRewards(); }
             catch (Exception exception) { MelonLogger.Warning("Logistics payout: " + exception.Message); }
-            if (!Cfg.Enabled || !MatchAcceptsRewards) return;
+            if (!AITransportActive && AITransportJobs.Count > 0) ResetAITransports(true);
+            if ((!Cfg.Enabled && !AITransportActive) || !MatchAcceptsRewards) return;
             _elapsed += Time.deltaTime;
             if (_elapsed < 1f) return;
             _elapsed = 0f;
@@ -328,7 +337,12 @@ namespace Si_Logistics
                 if (!IsTransport(transport)) continue;
                 int vehicleId = transport.GetInstanceID();
                 active.Add(vehicleId);
-                if (transport.ControlledBy == null)
+                // Assigned AI jobs must run before the player-only transfer gate.
+                if (AITransportJobs.TryGetValue(vehicleId, out var aiJob))
+                {
+                    if (TickAITransport(aiJob)) continue;
+                }
+                if (!Cfg.Enabled || transport.ControlledBy == null)
                 {
                     if (CargoByTransport.TryGetValue(vehicleId, out Cargo unattended)) SetTransfer(transport, unattended, null);
                     continue;
@@ -349,6 +363,8 @@ namespace Si_Logistics
             foreach (var pair in CargoByTransport)
                 if (!active.Contains(pair.Key)) stale.Add(pair.Key);
             foreach (int vehicleId in stale) CargoByTransport.Remove(vehicleId);
+            foreach (var pair in new List<KeyValuePair<int, AITransportJob>>(AITransportJobs))
+                if (!active.Contains(pair.Key)) CancelAITransport(pair.Value, "transport destroyed or no longer eligible", false);
         }
 
         private static void DiagnoseNearby(Unit transport, Cargo cargo)
@@ -395,15 +411,15 @@ namespace Si_Logistics
 
         // True while loading continues: something was loaded, or an active loading session still has a
         // friendly harvester in range (an empty harvester pauses loading instead of ending it).
-        private static bool TryLoad(Unit transport, Cargo cargo)
+        private static bool TryLoad(Unit transport, Cargo cargo, Unit assignedHarvester = null, float? loadRadius = null)
         {
             bool harvesterInRange = false;
             foreach (Unit harvester in Unit.Units)
             {
-                if (harvester == null || harvester.ObjectInfo == null || harvester.ObjectInfo.UnitType != UnitType.Harvester ||
+                if ((assignedHarvester != null && harvester != assignedHarvester) || harvester == null || harvester.ObjectInfo == null || harvester.ObjectInfo.UnitType != UnitType.Harvester ||
                     harvester.Team != transport.Team || harvester.DamageManager == null ||
                     harvester.DamageManager.IsDestroyed || !harvester.IsResourceHolder ||
-                    Vector3.Distance(harvester.transform.position, transport.transform.position) > Cfg.LoadRadius) continue;
+                    Vector3.Distance(harvester.transform.position, transport.transform.position) > (loadRadius ?? Cfg.LoadRadius)) continue;
 
                 harvesterInRange = true;
                 var resource = transport.Team.UsableResource;
@@ -441,14 +457,14 @@ namespace Si_Logistics
             return harvesterInRange && cargo.Transfer == "Loading";
         }
 
-        private static bool TryUnload(Unit transport, Cargo cargo)
+        private static bool TryUnload(Unit transport, Cargo cargo, Structure assignedRefinery = null, float? unloadRadius = null)
         {
             foreach (Structure refinery in Structure.Structures)
             {
-                if (refinery == null || refinery.Team != transport.Team ||
+                if ((assignedRefinery != null && refinery != assignedRefinery) || refinery == null || refinery.Team != transport.Team ||
                     refinery.ResourceDepositPoints == null || refinery.ResourceDepositPoints.Count == 0 ||
                     refinery.DamageManager == null || refinery.DamageManager.IsDestroyed ||
-                    Vector3.Distance(refinery.transform.position, transport.transform.position) > Cfg.UnloadRadius) continue;
+                    Vector3.Distance(refinery.transform.position, transport.transform.position) > (unloadRadius ?? Cfg.UnloadRadius)) continue;
                 int attempted = Math.Min(Math.Min(cargo.Amount, Math.Max(1, Cfg.UnloadUnitsPerSecond)),
                                          Math.Max(0, transport.Team.RemainingResourceCapacity));
                 if (attempted <= 0) return false;

@@ -11,20 +11,20 @@
   "GroundCargoCapacity": 3000,
   "LoadUnitsPerSecond": 300,
   "UnloadUnitsPerSecond": 300,
-  "LoadRadius": 40.0,
-  "UnloadRadius": 65.0,
-  "DeliveryCooldownSeconds": 20.0,
+  "LoadRadius": 40,
+  "UnloadRadius": 65,
+  "DeliveryCooldownSeconds": 20,
   "PersonalBonus": {
     "Enabled": true,
     "Share": 0.1,
     "HarvesterDepositShare": 0.2,
     "HarvesterTransferShare": 0.1,
-    "PayoutDelaySeconds": 20.0,
+    "PayoutDelaySeconds": 20,
     "MinBatch": 100,
     "AnnounceToPlayer": true
   },
   "Chat": {
-    "ProgressIntervalSeconds": 3.0,
+    "ProgressIntervalSeconds": 3,
     "ProgressBarLength": 10,
     "BarFilled": "#",
     "BarEmpty": "-"
@@ -40,5 +40,22 @@
       "logi"
     ],
     "HideFromChat": true
+  },
+  "harvesterfix": {
+    "Enabled": false,
+    "MaximumReservationsPerRefinery": 5,
+    "NearPatchDistanceMetres": 400,
+    "MediumPatchDistanceMetres": 800,
+    "NearPatchReservations": 1,
+    "MediumPatchReservations": 2,
+    "FarPatchReservations": 3,
+    "TransferWaitingTimeSeconds": 120,
+    "ReservationCheckTimeSeconds": 10,
+    "ReservationDistanceIncrementMetres": 50
+  },
+  "AItransport": {
+    "Enabled": false,
+    "DropshipLoadRadius": 150,
+    "DropshipUnloadRadius": 150
   }
 }

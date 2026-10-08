@@ -12,11 +12,11 @@ namespace Si_Logistics
     {
         public bool Enabled = false;
         public int MaximumReservationsPerRefinery = 5;
-        public float NearPatchDistanceMetres = 200f;
-        public float MediumPatchDistanceMetres = 600f;
+        public float NearPatchDistanceMetres = 400f;
+        public float MediumPatchDistanceMetres = 800f;
         public int NearPatchReservations = 1;
         public int MediumPatchReservations = 2;
-        public int FarPatchReservations = 4;
+        public int FarPatchReservations = 3;
         public float TransferWaitingTimeSeconds = 120f;
         public float ReservationCheckTimeSeconds = 10f;
         public float ReservationDistanceIncrementMetres = 50f;
@@ -68,8 +68,8 @@ namespace Si_Logistics
             if (Cfg.HarvesterFix == null) Cfg.HarvesterFix = new HarvesterFixConfig();
             var c = Cfg.HarvesterFix;
             c.MaximumReservationsPerRefinery = Math.Max(1, Math.Min(32, c.MaximumReservationsPerRefinery));
-            c.NearPatchDistanceMetres = ValidHarvestSetting(c.NearPatchDistanceMetres, 200, 0, 100000);
-            c.MediumPatchDistanceMetres = ValidHarvestSetting(c.MediumPatchDistanceMetres, 600, c.NearPatchDistanceMetres, 100000);
+            c.NearPatchDistanceMetres = ValidHarvestSetting(c.NearPatchDistanceMetres, 400, 0, 100000);
+            c.MediumPatchDistanceMetres = ValidHarvestSetting(c.MediumPatchDistanceMetres, 800, c.NearPatchDistanceMetres, 100000);
             c.NearPatchReservations = Math.Max(1, Math.Min(32, c.NearPatchReservations));
             c.MediumPatchReservations = Math.Max(1, Math.Min(32, c.MediumPatchReservations));
             c.FarPatchReservations = Math.Max(1, Math.Min(32, c.FarPatchReservations));
@@ -126,7 +126,7 @@ namespace Si_Logistics
                 " | managed " + managed + ", patch reservations " + patches + ", refinery reservations " + queued +
                 " | refinery slots " + c.MaximumReservationsPerRefinery +
                 " | home patch slots " + c.NearPatchReservations + "/" + c.MediumPatchReservations + "/" + c.FarPatchReservations +
-                " at <=" + c.NearPatchDistanceMetres + "m / <=" + c.MediumPatchDistanceMetres + "m / farther" +
+                " at <=" + c.NearPatchDistanceMetres + "m / <" + c.MediumPatchDistanceMetres + "m / farther" +
                 " | pickup wait " + c.TransferWaitingTimeSeconds + "s, check " + c.ReservationCheckTimeSeconds +
                 "s, first wait 100m, subsequent spacing " + c.ReservationDistanceIncrementMetres + "m");
             if (sub == "status") DumpHarvesterStatus();
@@ -372,7 +372,7 @@ namespace Si_Logistics
                     if (distance < nearest) nearest = distance;
                 }
             if (nearest <= c.NearPatchDistanceMetres) return c.NearPatchReservations;
-            if (nearest <= c.MediumPatchDistanceMetres) return c.MediumPatchReservations;
+            if (nearest < c.MediumPatchDistanceMetres) return c.MediumPatchReservations;
             return c.FarPatchReservations; // No friendly refinery also uses the far band.
         }
 

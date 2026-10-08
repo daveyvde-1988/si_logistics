@@ -4,13 +4,14 @@
     <Nullable>disable</Nullable>
     <LangVersion>latest</LangVersion>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <Version>0.5.4</Version>
+    <Version>0.6.3</Version>
     <ServerRoot Condition="'$(ServerRoot)' == ''">$(MSBuildThisFileDirectory)..\..</ServerRoot>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="Si_Logistics.cs" />
     <Compile Include="LogisticsRewards.cs" />
     <Compile Include="HarvesterFix.cs" />
+    <Compile Include="AITransport.cs" />
     <Reference Include="0Harmony"><HintPath>$(ServerRoot)\MelonLoader\net35\0Harmony.dll</HintPath><Private>False</Private></Reference>
     <PackageReference Include="LavaGang.MelonLoader" Version="0.7.0" />
     <Reference Include="SilicaCore"><HintPath>SilicaCore.dll</HintPath><Private>False</Private></Reference>

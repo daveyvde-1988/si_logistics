@@ -86,14 +86,15 @@ namespace Si_Logistics
                 if (ReferenceEquals(pair.Value.Player, player)) Rewards.Remove(pair.Key);
         }
         private static void LogisticsMatchStarted(GameMode mode)
-        { ResetHarvesterFix(false); RewardEpoch++; Rewards.Clear(); CargoByTransport.Clear(); MatchAcceptsRewards = true; }
+        { ResetAITransports(false); ResetHarvesterFix(false); RewardEpoch++; Rewards.Clear(); CargoByTransport.Clear(); MatchAcceptsRewards = true; }
         private static void LogisticsMatchEnded(GameMode mode, Team winner)
-        { ResetHarvesterFix(false); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); CargoByTransport.Clear(); }
+        { ResetAITransports(false); ResetHarvesterFix(false); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); CargoByTransport.Clear(); }
         public override void OnSceneWasInitialized(int buildIndex, string sceneName) => BindRewardEvents();
         public override void OnSceneWasUnloaded(int buildIndex, string sceneName)
-        { ResetHarvesterFix(false); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); CargoByTransport.Clear(); }
+        { ResetAITransports(false); ResetHarvesterFix(false); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); CargoByTransport.Clear(); }
         public override void OnDeinitializeMelon()
         {
+            ResetAITransports(true);
             ResetHarvesterFix(true);
             GameEvents.OnUnitSpawned -= HarvesterSpawned;
             RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); CargoByTransport.Clear();

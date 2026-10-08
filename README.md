@@ -1,7 +1,7 @@
 # si_logistics
 Logistics mod for Silica
 
-## Harvester fix (0.5.4)
+## Harvester fix (0.6.0)
 
 Server-side controller for AI-driven human harvesters. Disabled by default; the
 normal Logistics transport transfers and rewards are independent of this switch.
@@ -22,11 +22,11 @@ Config: `UserData/Logistics_cfg/Si_Logistics_Config.json`:
 "harvesterfix": {
   "Enabled": false,
   "MaximumReservationsPerRefinery": 5,
-  "NearPatchDistanceMetres": 200.0,
-  "MediumPatchDistanceMetres": 600.0,
+  "NearPatchDistanceMetres": 400.0,
+  "MediumPatchDistanceMetres": 800.0,
   "NearPatchReservations": 1,
   "MediumPatchReservations": 2,
-  "FarPatchReservations": 4,
+  "FarPatchReservations": 3,
   "TransferWaitingTimeSeconds": 120.0,
   "ReservationCheckTimeSeconds": 10.0,
   "ReservationDistanceIncrementMetres": 50.0
@@ -45,13 +45,13 @@ match/scene cleanup release the assignment. Manual unload orders preserve it.
 
 Patch limits use horizontal straight-line distance from the patch's SignalCenter
 to the closest surviving friendly refinery's position (with a matching resource
-deposit point). The inclusive distance bands default to:
+deposit point). The distance bands default to (800m belongs to the far band):
 
 | Distance to nearest friendly refinery | Assignments |
 | --- | --- |
-| Up to 200m | 1 |
-| Over 200m, up to 600m | 2 |
-| Over 600m, or no friendly refinery | 4 |
+| Up to and including 400m | 1 |
+| Over 400m, below 800m | 2 |
+| 800m and above, or no friendly refinery | 3 |
 
 The five NearPatch/MediumPatch/FarPatch settings above replace the old uniform
 MaximumReservationsPerBalteriumPatch setting. Counts accept 1–32; distances are
@@ -102,7 +102,7 @@ even if the patch becomes depleted. After the grace period, normal return/patch
 selection resumes when the timer expires. A partially loaded harvester
 leaving a depleted patch unloads first when an eligible refinery is closer than
 the next available patch; this applies to any nonempty partial load, including
-half-full harvesters. This feature does not automate the transport's driving.
+half-full harvesters. The separate AI transport prototype below can automate the transport's driving.
 
 Native mining, local movement recovery, docking and undocking are retained.
 Player-driven vehicles are excluded. Explicit harvest and deposit orders both
@@ -131,7 +131,7 @@ Compilation does not establish in-game behaviour.
 
 1. Confirm status starts OFF and ordinary harvesting remains vanilla; enable it.
 2. Build multiple harvesters: check factory exit, 10-second delay, distinct travel
-   reservations with the 1/2/4 distance bands. Confirm the same home patch stays
+   reservations with the 1/2/3 distance bands. Confirm the same home patch stays
    reserved while its owner unloads and is selected again on its return.
 3. Send at least six full harvesters towards one refinery: check the active bay,
    100m/150m/200m/250m waiting spots, FIFO advancement and the sixth waiting at its
@@ -151,3 +151,83 @@ refineries; enable the fix and check that they retry. Then issue deposit orders 
 several harvesters at the same refinery. After the first unloads and clears the
 bay, check the next vehicle advances within the configured check interval. If one
 stalls, run `/harvesterfix status` before moving it so the log captures the state.
+
+## AI transport prototype (0.6.3)
+
+0.6.2 expands the refinery destination search to the outer transfer radius and
+uses native refinery approach points at their authored heights, with native
+deposit positions as a fallback. The old inner rings could reject every refinery
+before issuing any driving order. Failed selection now logs refinery geometry
+and retries every five seconds. Transfer radius and accounting are unchanged.
+Native approach fallbacks may share space with harvesters; check traffic in-game.
+
+0.6.1 connects assigned AI jobs to the one-second transfer update before the
+player-driver exclusion. In 0.6.0, assignments were recorded but never ticked,
+so transports retained native Follow and performed no automated transfers.
+
+`/AItransport on|off|status` controls AI hauling independently of player Logistics.
+On/off requires Admin Generic permission and persists in the existing JSON CFG:
+
+```json
+"AItransport": {
+  "Enabled": false,
+  "DropshipLoadRadius": 150.0,
+  "DropshipUnloadRadius": 150.0
+}
+```
+
+After enabling, select an AI transport as commander and right-click a friendly
+harvester. Native friendly-unit following resolves to Defend; an explicit Defend
+order on that harvester also assigns hauling. Only accepted, immediate orders
+activate it; queued Follow orders retain native behaviour. Existing followers are
+not adopted automatically: issue a fresh right-click after enabling.
+
+The assigned transport approaches only that harvester, stays in transfer range
+until full, selects the closest friendly deposit structure with a navigable
+transfer position, fully unloads and repeats. Multiple transports may share one
+harvester. Transfers reuse the existing TransportUnits list, air/ground capacity,
+load/unload rates, radii, cooldown and cargo ledger. Unassigned AI transports remain
+excluded. Player transfers still obey the main Logistics Enabled switch; assigned
+AI hauling obeys AItransport.Enabled independently. No driver reward is generated
+for an AI delivery. Each successful pickup invokes the existing harvester wait
+timer (requires harvesterfix enabled); merely waiting in range does not extend it.
+
+A new accepted external command, including a queued command, cancels the old
+assignment. A new immediate Follow/Defend on a harvester replaces it. Player
+takeover, loss of either unit, team changes, disabling and match/scene cleanup
+release assignments. Disabling stops managed AI movement; it does not erase
+surviving cargo. Cancelled cargo can be delivered by a player or a reassigned AI
+transport. Destroyed vehicles lose cargo; a transport changing teams loses its
+old-team ledger. Assignments and cargo are not persisted across matches/restarts.
+
+Movement is native AI Move/Stop, with navigation-projected approach positions
+and spacing between assigned transports. Transport deliveries use the existing
+range trigger, not a harvester docking bay or harvester refinery queue. Full team
+storage holds a delivery until room exists; no friendly refinery holds the full
+transport until one becomes available. Depleted harvesters are still followed
+as they resume harvesting elsewhere. Terrain projection does not prove route
+reachability, and large vehicles, narrow lanes, flight altitude and heavy traffic
+need live testing. This is not a transport traffic/queue controller.
+
+`/AItransport status` writes assignments, target IDs, cargo, delivery state and
+destinations to the server log under `[AITransport]`. Assignment, cancellation,
+accepted harvester-target commands and phase changes are logged automatically.
+If a right-click does not assign, enable `/logistics debug on`, repeat it and
+capture status to distinguish command resolution from navigation/transfer issues.
+
+Focused prototype checks: one transport performs several full cycles; two or more
+share one harvester; Move/Stop cancels; retargeting changes only that transport;
+player takeover retains cargo; destroy either target/refinery; fill team storage;
+toggle AI transport off/on; verify player-driven loading and unloading still work.
+
+### AI Dropship transfer ranges (0.6.3)
+
+Assigned AI Dropships use their own pickup and unloading radii, both defaulting
+to 150m. Both navigation destination selection and actual transfers use these
+values, measured in 3D so flight altitude counts. Edit AItransport.DropshipLoadRadius
+and AItransport.DropshipUnloadRadius in the JSON CFG and run /logistics reload.
+Values are clamped to 1–2000m; non-finite values fall back to 150m.
+Ground transports, Shuttles and player-driven Dropships keep the ordinary
+LoadRadius/UnloadRadius settings. /AItransport status logs each assignment’s
+effective radii. Check an AI Dropship loading, delivering and returning, then
+verify that ground and player-driven transfer ranges remain as configured.
