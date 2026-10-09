@@ -10,7 +10,7 @@ namespace Si_Logistics
 {
     public sealed class HarvesterFixConfig
     {
-        public bool Enabled = false;
+        public bool Enabled = true;
         public int MaximumReservationsPerRefinery = 5;
         public float NearPatchDistanceMetres = 400f;
         public float MediumPatchDistanceMetres = 800f;
@@ -52,7 +52,7 @@ namespace Si_Logistics
         private static readonly HashSet<int> NewHarvesters = new HashSet<int>();
         private static bool HarvestFixInstalled, HarvestOwnOrder;
         private static float NextHarvestScan;
-        private static bool HarvestFixActive => HarvestFixInstalled && Cfg.HarvesterFix.Enabled && Game.GetIsServer() && MatchAcceptsRewards;
+        private static bool HarvestFixActive => HarvestFixInstalled && Cfg.Enabled && Cfg.HarvesterFix.Enabled && Game.GetIsServer() && MatchAcceptsRewards;
 
         private static void BindHarvesterEvents()
         {
@@ -76,8 +76,7 @@ namespace Si_Logistics
             c.TransferWaitingTimeSeconds = ValidHarvestSetting(c.TransferWaitingTimeSeconds, 120, 0, 3600);
             c.ReservationCheckTimeSeconds = ValidHarvestSetting(c.ReservationCheckTimeSeconds, 10, 1, 300);
             c.ReservationDistanceIncrementMetres = ValidHarvestSetting(c.ReservationDistanceIncrementMetres, 50, 25, 2000);
-            // Reloading also releases reservations made under the old limits.
-            ResetHarvesterFix(true);
+            // LoadConfig resets reservations only if validated harvester settings changed.
         }
 
         private void InstallHarvesterFix()
@@ -105,19 +104,8 @@ namespace Si_Logistics
                 NewHarvesters.Add(unit.GetInstanceID());
         }
 
-        private static void OnHarvesterFixCommand(Player caller, string args)
+        private static void ShowHarvesterStatus(Player caller)
         {
-            string[] parts = (args ?? "").Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            string sub = parts.Length > 1 ? parts[1].ToLowerInvariant() : "status";
-            if (sub != "status" && sub != "on" && sub != "off") { Reply(caller, "Usage: /harvesterfix on|off|status"); return; }
-            if (sub != "status")
-            {
-                if (caller != null && (!caller.IsAdmin() || !AdminMethods.PowerInPowers(Power.Generic, caller.GetAdminPowers())))
-                { Reply(caller, "Admin Generic permission required."); return; }
-                Cfg.HarvesterFix.Enabled = sub == "on";
-                ResetHarvesterFix(true);
-                SaveConfig();
-            }
             int patches = 0, queued = 0, managed = 0;
             foreach (var j in HarvestJobs.Values)
             { if (j.PatchReserved) patches++; if (j.Line != null) queued++; if (j.Phase != HarvestPhase.Manual) managed++; }
@@ -129,7 +117,8 @@ namespace Si_Logistics
                 " at <=" + c.NearPatchDistanceMetres + "m / <" + c.MediumPatchDistanceMetres + "m / farther" +
                 " | pickup wait " + c.TransferWaitingTimeSeconds + "s, check " + c.ReservationCheckTimeSeconds +
                 "s, first wait 100m, subsequent spacing " + c.ReservationDistanceIncrementMetres + "m");
-            if (sub == "status") DumpHarvesterStatus();
+            if (!Cfg.Enabled && c.Enabled) Reply(caller, "Harvester fix paused by Logistics master switch.");
+            if (Cfg.Debug) DumpHarvesterStatus();
         }
 
         private static int HarvestObjectId(UnityEngine.Object value) => value ? value.GetInstanceID() : 0;
@@ -434,7 +423,12 @@ namespace Si_Logistics
             float tolerance = unit.PhysicalRadius + a.MiningArms.ExtractionRadius;
             var area = j.Area && j.Area.GetPositionInBounds(a.ExtractionPosition, tolerance) ? j.Area :
                 ResourceArea.GetResourceAreaAtPosition(a.Team, a.ResourceHolder.ResourceType, a.ExtractionPosition, true, tolerance);
-            if (!area) return;
+            if (!area || area.ResourceAmountCurrent <= 0)
+            {
+                if (j.PickupUntil > 0 || j.ResumeAfterPickup)
+                { j.PickupUntil = 0; j.ResumeAfterPickup = false; j.NextCheck = 0; }
+                return; // A pickup at a depleted patch must never restart the hold.
+            }
             bool startingWindow = Time.time >= j.PickupUntil;
             bool restoreOrder = startingWindow || j.Line != null || j.Phase != HarvestPhase.Harvesting || a.CurrentHarvestArea != area;
             bool keepReservation = j.PatchReserved && j.Area == area;
@@ -784,6 +778,11 @@ namespace Si_Logistics
             }
 
             bool depleted = !j.Area || j.Area.ResourceAmountCurrent <= 0;
+            if (depleted && (j.PickupUntil > 0 || j.ResumeAfterPickup))
+            {
+                j.PickupUntil = 0; j.ResumeAfterPickup = false; j.NextCheck = 0;
+                HarvestDiagnostic(j, "patch depleted: pickup hold cleared; normal routing resumed");
+            }
             bool full = a.ResourceHolder.RemainingSpace == 0;
             bool pickupWait = now < j.PickupUntil;
             if (pickupWait || j.ResumeAfterPickup)

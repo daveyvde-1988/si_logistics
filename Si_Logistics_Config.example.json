@@ -15,12 +15,8 @@
   "UnloadRadius": 65,
   "DeliveryCooldownSeconds": 20,
   "PersonalBonus": {
-    "Enabled": true,
     "Share": 0.1,
-    "HarvesterDepositShare": 0.2,
-    "HarvesterTransferShare": 0.1,
-    "PayoutDelaySeconds": 20,
-    "MinBatch": 100,
+    "TransferShare": 0.08,
     "AnnounceToPlayer": true
   },
   "Chat": {
@@ -35,14 +31,10 @@
     "OnLoad": "logistics_tick.wav"
   },
   "Commands": {
-    "PlayerCommand": "logistics",
-    "Aliases": [
-      "logi"
-    ],
     "HideFromChat": true
   },
   "harvesterfix": {
-    "Enabled": false,
+    "Enabled": true,
     "MaximumReservationsPerRefinery": 5,
     "NearPatchDistanceMetres": 400,
     "MediumPatchDistanceMetres": 800,
@@ -54,8 +46,22 @@
     "ReservationDistanceIncrementMetres": 50
   },
   "AItransport": {
+    "NearHarvesterDistanceMetres": 300,
+    "MediumHarvesterDistanceMetres": 600,
+    "NearGroundTransports": 2,
+    "NearAirTransports": 1,
+    "MediumGroundTransports": 3,
+    "MediumAirTransports": 1,
+    "FarGroundTransports": 4,
+    "FarAirTransports": 2,
+    "ReassignmentCheckSeconds": 10,
+    "NoProgressTimeoutSeconds": 120,
     "Enabled": false,
-    "DropshipLoadRadius": 150,
-    "DropshipUnloadRadius": 150
-  }
+    "airloadradius": 150,
+    "airunloadradius": 150,
+    "groundloadradius": 40,
+    "groundunloadradius": 65
+  },
+  "airloadunitspersecond": 500,
+  "airunloadunitspersecond": 500
 }

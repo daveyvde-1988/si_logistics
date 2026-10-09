@@ -10,7 +10,8 @@ namespace Si_Logistics
 {
     public sealed partial class LogisticsMod
     {
-        private static float RewardWindowSeconds => Cfg.PersonalBonus.PayoutDelaySeconds;
+        private static float NextRewardCheck = float.PositiveInfinity;
+        private static float RewardWindowSeconds => Cfg.DeliveryCooldownSeconds;
         private sealed class RewardAccount
         {
             internal Player Player;
@@ -26,24 +27,27 @@ namespace Si_Logistics
         private static bool Connected(Player player, long id) => player != null && id != 0 &&
             Player.Players != null && Player.Players.Contains(player) && SteamId(player) == id;
         private static decimal RewardRate => (decimal)Cfg.PersonalBonus.Share;
-        private static decimal HarvesterDepositRate => (decimal)(Cfg.PersonalBonus.HarvesterDepositShare ?? Cfg.PersonalBonus.Share * 2f);
-        private static decimal HarvesterTransferRate => (decimal)(Cfg.PersonalBonus.HarvesterTransferShare ?? Cfg.PersonalBonus.Share);
+        private static decimal HarvesterDepositRate => RewardRate;
+        private static decimal HarvesterTransferRate => (decimal)Cfg.PersonalBonus.TransferShare;
 
         private static void QueueReward(Player driver, int amount, decimal rate, int epoch)
         {
-            if (epoch != RewardEpoch || !Game.GetIsServer() || !MatchAcceptsRewards || !Cfg.Enabled || !Cfg.PersonalBonus.Enabled || amount <= 0 || rate <= 0) return;
+            if (epoch != RewardEpoch || !Game.GetIsServer() || !MatchAcceptsRewards || !Cfg.Enabled || amount <= 0 || rate <= 0) return;
             long id = SteamId(driver);
             if (!Connected(driver, id)) return;
             if (!Rewards.TryGetValue(id, out RewardAccount account) || !ReferenceEquals(account.Player, driver))
                 Rewards[id] = account = new RewardAccount { Player = driver };
             // Due does not slide forward as more rewards arrive.
-            if (account.Due == 0) account.Due = Time.unscaledTime + RewardWindowSeconds;
+            if (account.Due == 0) account.Due = Math.Max(float.Epsilon, Time.unscaledTime + RewardWindowSeconds);
             account.Pending += amount * rate;
+            NextRewardCheck = Math.Min(NextRewardCheck, account.Due);
         }
 
         private static void PayDueRewards()
         {
-            if (!Game.GetIsServer() || !MatchAcceptsRewards) return;
+            if (!Game.GetIsServer() || !MatchAcceptsRewards || !Cfg.Enabled || Time.unscaledTime < NextRewardCheck) return;
+            // Retry safely on exceptions; otherwise the minimum outstanding due time wins.
+            NextRewardCheck = Time.unscaledTime + 1f;
             foreach (var pair in new List<KeyValuePair<long, RewardAccount>>(Rewards))
             {
                 long id = pair.Key;
@@ -54,23 +58,26 @@ namespace Si_Logistics
                 decimal whole = decimal.Floor(account.Pending);
                 if (whole < 1) continue; // Keep the fraction until this player earns another window.
                 int balance = KohCredits.TryGetBalance(id);
-                if (balance < 0) { account.Due = Time.unscaledTime + RewardWindowSeconds; continue; }
+                if (balance < 0) { account.Due = Time.unscaledTime + Math.Max(1f, RewardWindowSeconds); continue; }
                 long room = (long)int.MaxValue - balance;
                 int payment = (int)Math.Min(whole, Math.Max(0L, room));
-                if (payment == 0) { account.Due = Time.unscaledTime + RewardWindowSeconds; continue; }
+                if (payment == 0) { account.Due = Time.unscaledTime + Math.Max(1f, RewardWindowSeconds); continue; }
                 // Consume before invoking the external API: a re-entrant callback cannot pay twice.
                 account.Pending -= payment;
                 KohCredits.GrantResult result = KohCredits.TryGrant(id, payment, "Logistics rewards (batched)");
                 if (Rewards.TryGetValue(id, out var current) && ReferenceEquals(current, account))
                 {
                     if (result == KohCredits.GrantResult.Unavailable) account.Pending += payment;
-                    if (account.Pending >= 1) account.Due = Time.unscaledTime + RewardWindowSeconds;
+                    if (account.Pending >= 1) account.Due = Time.unscaledTime + Math.Max(1f, RewardWindowSeconds);
                 }
                 if (result != KohCredits.GrantResult.Granted || !Cfg.PersonalBonus.AnnounceToPlayer || !Connected(account.Player, id)) continue;
                 int total = KohCredits.TryGetBalance(id);
                 HelperMethods.SendChatMessageToPlayer(account.Player, HelperMethods.chatPrefix,
                     " +" + payment + " credits for logistics" + (total >= 0 ? " (balance " + total + ")." : "."));
             }
+            NextRewardCheck = float.PositiveInfinity;
+            foreach (var account in Rewards.Values)
+                if (account.Due > 0) NextRewardCheck = Math.Min(NextRewardCheck, account.Due);
         }
 
         private static void BindRewardEvents()
@@ -86,18 +93,18 @@ namespace Si_Logistics
                 if (ReferenceEquals(pair.Value.Player, player)) Rewards.Remove(pair.Key);
         }
         private static void LogisticsMatchStarted(GameMode mode)
-        { ResetAITransports(false); ResetHarvesterFix(false); RewardEpoch++; Rewards.Clear(); CargoByTransport.Clear(); MatchAcceptsRewards = true; }
+        { ResetAITransports(false); ResetHarvesterFix(false); RewardEpoch++; Rewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear(); MatchAcceptsRewards = true; }
         private static void LogisticsMatchEnded(GameMode mode, Team winner)
-        { ResetAITransports(false); ResetHarvesterFix(false); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); CargoByTransport.Clear(); }
+        { ResetAITransports(false); ResetHarvesterFix(false); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear(); }
         public override void OnSceneWasInitialized(int buildIndex, string sceneName) => BindRewardEvents();
         public override void OnSceneWasUnloaded(int buildIndex, string sceneName)
-        { ResetAITransports(false); ResetHarvesterFix(false); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); CargoByTransport.Clear(); }
+        { ResetAITransports(false); ResetHarvesterFix(false); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear(); }
         public override void OnDeinitializeMelon()
         {
             ResetAITransports(true);
             ResetHarvesterFix(true);
             GameEvents.OnUnitSpawned -= HarvesterSpawned;
-            RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); CargoByTransport.Clear();
+            RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear();
             GameEvents.OnGameStarted -= LogisticsMatchStarted;
             GameEvents.OnGameEnded -= LogisticsMatchEnded;
             GameEvents.OnPlayerLeft -= LogisticsPlayerLeft;
@@ -119,6 +126,7 @@ namespace Si_Logistics
             internal int Epoch;
         }
         [ThreadStatic] private static DepositReceipt CurrentDeposit;
+        [ThreadStatic] private static Stack<DepositReceipt> DepositReceiptPool;
 
         private void InstallHarvesterRewards()
         {
@@ -137,8 +145,10 @@ namespace Si_Logistics
             __state = BeginDeposit(__instance.Creature, __instance.ResourceHolder);
         private static DepositReceipt BeginDeposit(Unit unit, ResourceHolder holder)
         {
-            var receipt = new DepositReceipt { Parent = CurrentDeposit, Epoch = RewardEpoch };
-            if (Game.GetIsServer() && MatchAcceptsRewards && Cfg.Enabled && Cfg.PersonalBonus.Enabled &&
+            if (DepositReceiptPool == null) DepositReceiptPool = new Stack<DepositReceipt>();
+            var receipt = DepositReceiptPool.Count > 0 ? DepositReceiptPool.Pop() : new DepositReceipt();
+            receipt.Parent = CurrentDeposit; receipt.Epoch = RewardEpoch;
+            if (Game.GetIsServer() && MatchAcceptsRewards && Cfg.Enabled &&
                 unit != null && unit.ObjectInfo != null && unit.ObjectInfo.UnitType == UnitType.Harvester &&
                 unit.Team != null && holder != null && holder.ResourceType == unit.Team.UsableResource)
             { receipt.Unit = unit; receipt.Holder = holder; receipt.Team = unit.Team; }
@@ -158,7 +168,15 @@ namespace Si_Logistics
                 }
             }
             catch (Exception error) { MelonLogger.Warning("Logistics harvester reward: " + error.Message); }
-            finally { CurrentDeposit = __state.Parent; }
+            finally
+            {
+                CurrentDeposit = __state.Parent;
+                __state.Parent = null; __state.Unit = null; __state.Holder = null;
+                __state.Driver = null; __state.Team = null; __state.Rate = 0;
+                __state.Retrieved = __state.Accepted = 0; __state.Consumed = false; __state.Epoch = 0;
+                // Bound retained storage and never retain Unity objects between updates.
+                if (DepositReceiptPool != null && DepositReceiptPool.Count < 8) DepositReceiptPool.Push(__state);
+            }
             return __exception;
         }
         private static int ObservedRetrieve(ResourceHolder holder, int requested)

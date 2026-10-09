@@ -9,7 +9,7 @@ using Newtonsoft.Json;
 using SilicaAdminMod;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(Si_Logistics.LogisticsMod), "Harvester Logistics Prototype", "0.6.3", "Silica community prototype")]
+[assembly: MelonInfo(typeof(Si_Logistics.LogisticsMod), "Harvester Logistics Prototype", "0.8.1", "Silica community prototype")]
 [assembly: MelonGame("Bohemia Interactive", "Silica")]
 [assembly: MelonOptionalDependencies("Admin Mod")]
 
@@ -29,6 +29,8 @@ namespace Si_Logistics
         public List<string> TransportUnits = new List<string> { "Shuttle", "Dropship", "Squad Transport", "Platoon Hauler" };
         public int AirCargoCapacity = 9000;
         public int GroundCargoCapacity = 3000;
+        [JsonProperty("airloadunitspersecond")] public int AirLoadUnitsPerSecond = 500;
+        [JsonProperty("airunloadunitspersecond")] public int AirUnloadUnitsPerSecond = 500;
         public int LoadUnitsPerSecond = 300;
         public int UnloadUnitsPerSecond = 300;
         public float LoadRadius = 40f;
@@ -43,8 +45,6 @@ namespace Si_Logistics
 
         public sealed class CommandConfig
         {
-            public string PlayerCommand = "logistics";
-            public List<string> Aliases = new List<string> { "logi" };
             public bool HideFromChat = true;
         }
 
@@ -59,16 +59,9 @@ namespace Si_Logistics
 
         public sealed class BonusConfig
         {
-            public bool Enabled = true;
-            // Share of every delivered Balterium unit that becomes personal King of the Hill credits
-            // (spendable with /buy) for the driver who unloads. 0.05 = 5 %: 9,000 delivered pays 450.
-            public float Share = 0.05f;
-            // Missing shares inherit the old rates once at config load, then remain independent.
-            public float? HarvesterDepositShare;
-            public float? HarvesterTransferShare;
-            public float PayoutDelaySeconds = 20f;
-            // Legacy configuration key retained for compatibility; not a payout threshold.
-            public int MinBatch = 100;
+            // Driver rewards are always enabled while the master switch is on.
+            public float Share = 0.10f;
+            public float TransferShare = 0.08f;
             public bool AnnounceToPlayer = true;
         }
 
@@ -110,11 +103,12 @@ namespace Si_Logistics
                 ", load/unload per s=" + Cfg.LoadUnitsPerSecond + "/" + Cfg.UnloadUnitsPerSecond +
                 ", radius load/unload=" + Cfg.LoadRadius + "/" + Cfg.UnloadRadius +
                 ", cooldown=" + Cfg.DeliveryCooldownSeconds + "s, debug=" + Cfg.Debug + ", sounds=" + Cfg.Sounds.Enabled +
-                ", personal bonus=" + (Cfg.PersonalBonus.Enabled ? RewardSettings() + " as KoH credits" : "off"));
+                ", personal rewards=" + RewardSettings() + " as KoH credits");
         }
 
         private static void LoadConfig()
         {
+            string previousHarvesterSettings = JsonConvert.SerializeObject(Cfg.HarvesterFix);
             try
             {
                 if (File.Exists(ConfigPath))
@@ -122,7 +116,23 @@ namespace Si_Logistics
                     // Replace: the default (Auto) appends file lists to the initializer defaults,
                     // which doubled TransportUnits in the 0.4.0 config.
                     var settings = new JsonSerializerSettings { ObjectCreationHandling = ObjectCreationHandling.Replace };
-                    Cfg = JsonConvert.DeserializeObject<LogisticsConfig>(File.ReadAllText(ConfigPath), settings) ?? new LogisticsConfig();
+                    var json = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(ConfigPath));
+                    var transport = json.GetValue("AItransport", StringComparison.OrdinalIgnoreCase) as Newtonsoft.Json.Linq.JObject;
+                    if (transport != null)
+                    {
+                        if (transport.GetValue("airloadradius", StringComparison.OrdinalIgnoreCase) == null)
+                            transport["airloadradius"] = transport.GetValue("DropshipLoadRadius", StringComparison.OrdinalIgnoreCase) ?? 150f;
+                        if (transport.GetValue("airunloadradius", StringComparison.OrdinalIgnoreCase) == null)
+                            transport["airunloadradius"] = transport.GetValue("DropshipUnloadRadius", StringComparison.OrdinalIgnoreCase) ?? 150f;
+                        if (transport.GetValue("groundloadradius", StringComparison.OrdinalIgnoreCase) == null)
+                            transport["groundloadradius"] = json.GetValue("LoadRadius", StringComparison.OrdinalIgnoreCase) ?? 40f;
+                        if (transport.GetValue("groundunloadradius", StringComparison.OrdinalIgnoreCase) == null)
+                            transport["groundunloadradius"] = json.GetValue("UnloadRadius", StringComparison.OrdinalIgnoreCase) ?? 65f;
+                    }
+                    var bonus = json.GetValue("PersonalBonus", StringComparison.OrdinalIgnoreCase) as Newtonsoft.Json.Linq.JObject;
+                    if (bonus != null && bonus.GetValue("TransferShare", StringComparison.OrdinalIgnoreCase) == null)
+                        bonus["TransferShare"] = bonus.GetValue("HarvesterTransferShare", StringComparison.OrdinalIgnoreCase) ?? 0.08f;
+                    Cfg = JsonConvert.DeserializeObject<LogisticsConfig>(json.ToString(), settings) ?? new LogisticsConfig();
                 }
                 else
                 {
@@ -141,26 +151,21 @@ namespace Si_Logistics
             if (Cfg.PersonalBonus == null) Cfg.PersonalBonus = new LogisticsConfig.BonusConfig();
             if (Cfg.Chat == null) Cfg.Chat = new LogisticsConfig.ChatConfig();
             if (Cfg.Commands == null) Cfg.Commands = new LogisticsConfig.CommandConfig();
-            if (Cfg.Commands.Aliases == null) Cfg.Commands.Aliases = new List<string>();
-            Cfg.PersonalBonus.Share = float.IsNaN(Cfg.PersonalBonus.Share) || float.IsInfinity(Cfg.PersonalBonus.Share)
-                ? 0.05f : Mathf.Clamp01(Cfg.PersonalBonus.Share);
-            Cfg.PersonalBonus.HarvesterDepositShare = ValidRewardShare(
-                Cfg.PersonalBonus.HarvesterDepositShare, Cfg.PersonalBonus.Share * 2f);
-            Cfg.PersonalBonus.HarvesterTransferShare = ValidRewardShare(
-                Cfg.PersonalBonus.HarvesterTransferShare, Cfg.PersonalBonus.Share);
-            float delay = Cfg.PersonalBonus.PayoutDelaySeconds;
-            Cfg.PersonalBonus.PayoutDelaySeconds = float.IsNaN(delay) || float.IsInfinity(delay)
-                ? 20f : Mathf.Clamp(delay, 1f, 3600f);
+            Cfg.PersonalBonus.Share = ValidRewardShare(Cfg.PersonalBonus.Share, 0.10f);
+            Cfg.PersonalBonus.TransferShare = ValidRewardShare(Cfg.PersonalBonus.TransferShare, 0.08f);
+            if (float.IsNaN(Cfg.DeliveryCooldownSeconds) || float.IsInfinity(Cfg.DeliveryCooldownSeconds) || Cfg.DeliveryCooldownSeconds < 0)
+                Cfg.DeliveryCooldownSeconds = 20f;
             var unique = new List<string>();
             foreach (string name in Cfg.TransportUnits)
                 if (!string.IsNullOrWhiteSpace(name) && !unique.Exists(n => n.Equals(name.Trim(), StringComparison.OrdinalIgnoreCase)))
                     unique.Add(name.Trim());
             Cfg.TransportUnits = unique;
             ValidateHarvesterFixConfig();
+            if (previousHarvesterSettings != JsonConvert.SerializeObject(Cfg.HarvesterFix)) ResetHarvesterFix(true);
             if (Cfg.AITransport == null) Cfg.AITransport = new AITransportConfig();
-            Cfg.AITransport.DropshipLoadRadius = ValidHarvestSetting(Cfg.AITransport.DropshipLoadRadius, 150f, 1f, 2000f);
-            Cfg.AITransport.DropshipUnloadRadius = ValidHarvestSetting(Cfg.AITransport.DropshipUnloadRadius, 150f, 1f, 2000f);
-            if (!Cfg.AITransport.Enabled) ResetAITransports(true);
+            ValidateAITransportConfig();
+            if (!Cfg.Enabled) ReleaseLogisticsControl();
+            else if (!Cfg.AITransport.Enabled) ResetAITransports(true);
         }
 
         private static float ValidRewardShare(float? value, float fallback)
@@ -172,9 +177,9 @@ namespace Si_Logistics
 
         private static string RewardSettings() =>
             "transport " + Cfg.PersonalBonus.Share.ToString("P1", CultureInfo.InvariantCulture) +
-            ", harvester refinery " + Cfg.PersonalBonus.HarvesterDepositShare.Value.ToString("P1", CultureInfo.InvariantCulture) +
-            ", harvester transfer " + Cfg.PersonalBonus.HarvesterTransferShare.Value.ToString("P1", CultureInfo.InvariantCulture) +
-            ", payout " + Cfg.PersonalBonus.PayoutDelaySeconds.ToString("0.##", CultureInfo.InvariantCulture) + "s";
+            ", harvester refinery " + Cfg.PersonalBonus.Share.ToString("P1", CultureInfo.InvariantCulture) +
+            ", harvester transfer " + Cfg.PersonalBonus.TransferShare.ToString("P1", CultureInfo.InvariantCulture) +
+            ", payout " + Cfg.DeliveryCooldownSeconds.ToString("0.##", CultureInfo.InvariantCulture) + "s";
 
         private static void SaveConfig()
         {
@@ -192,20 +197,21 @@ namespace Si_Logistics
             BindRewardEvents();
             InstallHarvesterFix();
             InstallAITransport();
-            HelperMethods.RegisterPlayerCommand("aitransport", OnAITransportCommand, Cfg.Commands.HideFromChat);
-            HelperMethods.RegisterPlayerCommand("harvesterfix", OnHarvesterFixCommand, Cfg.Commands.HideFromChat);
-            // AdminMod's command lists exist only after its own initialization.
-            var names = new List<string> { Cfg.Commands.PlayerCommand };
-            names.AddRange(Cfg.Commands.Aliases);
-            var registered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (string name in names)
-                if (!string.IsNullOrWhiteSpace(name) && registered.Add(name.Trim()))
-                    HelperMethods.RegisterPlayerCommand(name.Trim(), OnLogisticsCommand, Cfg.Commands.HideFromChat);
+            // Fixed public surface: both names always expose exactly the same commands.
+            HelperMethods.RegisterPlayerCommand("logistics", OnLogisticsCommand, Cfg.Commands.HideFromChat);
+            HelperMethods.RegisterPlayerCommand("logi", OnLogisticsCommand, Cfg.Commands.HideFromChat);
         }
 
-        // "/logistics [status|help]" for everyone; admin (SAM Generic):
-        // on|off, bonus on|off, share <0..1>, capacity air|ground <n>, rate load|unload <n>,
-        // radius load|unload <m>, cooldown <s>, debug on|off, reload. Changes are saved to the JSON.
+        private static void ReleaseLogisticsControl()
+        {
+            ResetAITransports(true);
+            ResetHarvesterFix(true);
+            if (Unit.Units == null) return;
+            foreach (var unit in Unit.Units)
+                if (IsTransport(unit) && CargoByTransport.TryGetValue(unit.GetInstanceID(), out var cargo))
+                    SetTransfer(unit, cargo, null);
+        }
+
         private static void OnLogisticsCommand(Player caller, string args)
         {
             try
@@ -219,24 +225,46 @@ namespace Si_Logistics
                 if (sub == "help") { ShowHelp(caller); return; }
                 if (caller != null && (!caller.IsAdmin() || !AdminMethods.PowerInPowers(Power.Generic, caller.GetAdminPowers())))
                 {
-                    Reply(caller, "Admin only. Use /" + Cfg.Commands.PlayerCommand + " for status.");
+                    Reply(caller, "Admin only. Use /logistics for status.");
                     return;
                 }
+
+                int expected = (sub == "capacity" || sub == "rate" || sub == "radius") ? 4 :
+                    (sub == "on" || sub == "off" || sub == "reload") ? 2 : 3;
+                if (parts.Length != expected) { ShowHelp(caller); return; }
 
                 switch (sub)
                 {
                     case "on":
                     case "off":
-                        Cfg.Enabled = sub == "on"; SaveConfig();
+                        Cfg.Enabled = sub == "on";
+                        if (!Cfg.Enabled) ReleaseLogisticsControl();
+                        SaveConfig();
                         Reply(caller, "Logistics " + (Cfg.Enabled ? "enabled." : "disabled.")); break;
-                    case "bonus":
-                        if (a1 != "on" && a1 != "off") { Reply(caller, "Usage: bonus on|off"); return; }
-                        Cfg.PersonalBonus.Enabled = a1 == "on"; SaveConfig();
-                        Reply(caller, "Personal bonus " + a1 + "."); break;
                     case "share":
-                        if (!TryParseFloat(a1, out float share) || float.IsNaN(share) || float.IsInfinity(share) || share < 0f || share > 1f) { Reply(caller, "Usage: share <0..1>"); return; }
-                        Cfg.PersonalBonus.Share = share; SaveConfig();
-                        Reply(caller, "Transport unload bonus share = " + share.ToString("P1", CultureInfo.InvariantCulture) + "."); break;
+                    case "transfershare":
+                        if (!TryParseFloat(a1, out float share) || share < 0f || share > 1f)
+                        { Reply(caller, "Usage: " + sub + " <0..1>"); return; }
+                        if (sub == "share") Cfg.PersonalBonus.Share = share;
+                        else Cfg.PersonalBonus.TransferShare = share;
+                        SaveConfig();
+                        Reply(caller, (sub == "share" ? "Transport and harvester refinery reward" : "Harvester-to-transport pickup reward") +
+                            " = " + share.ToString("P1", CultureInfo.InvariantCulture) + "."); break;
+                    case "harvesterfix":
+                    case "aitransport":
+                        if (a1 != "on" && a1 != "off") { Reply(caller, "Usage: /logistics " + sub + " on|off"); return; }
+                        if (sub == "harvesterfix")
+                        {
+                            Cfg.HarvesterFix.Enabled = a1 == "on";
+                            if (!Cfg.HarvesterFix.Enabled) ResetHarvesterFix(true);
+                        }
+                        else
+                        {
+                            Cfg.AITransport.Enabled = a1 == "on";
+                            if (!Cfg.AITransport.Enabled) ResetAITransports(true);
+                        }
+                        SaveConfig();
+                        Reply(caller, sub + " " + a1.ToUpperInvariant() + (Cfg.Enabled ? "." : " (master Logistics is OFF).")); break;
                     case "capacity":
                         if (!int.TryParse(a2, out int capacity) || capacity <= 0 || (a1 != "air" && a1 != "ground")) { Reply(caller, "Usage: capacity air|ground <n>"); return; }
                         if (a1 == "air") Cfg.AirCargoCapacity = capacity; else Cfg.GroundCargoCapacity = capacity;
@@ -252,7 +280,7 @@ namespace Si_Logistics
                     case "cooldown":
                         if (!TryParseFloat(a1, out float cooldown) || cooldown < 0f) { Reply(caller, "Usage: cooldown <seconds>"); return; }
                         Cfg.DeliveryCooldownSeconds = cooldown; SaveConfig();
-                        Reply(caller, "Delivery cooldown = " + cooldown.ToString("F0", CultureInfo.InvariantCulture) + " s."); break;
+                        Reply(caller, "Delivery cooldown and new reward payout delay = " + cooldown.ToString("F0", CultureInfo.InvariantCulture) + " s."); break;
                     case "debug":
                         if (a1 != "on" && a1 != "off") { Reply(caller, "Usage: debug on|off"); return; }
                         Cfg.Debug = a1 == "on"; SaveConfig();
@@ -270,10 +298,12 @@ namespace Si_Logistics
             Reply(caller, "Logistics " + (Cfg.Enabled ? "ON" : "OFF") +
                 " | load " + Cfg.LoadUnitsPerSecond + "/s within " + Cfg.LoadRadius.ToString("F0", CultureInfo.InvariantCulture) + " m" +
                 " | unload " + Cfg.UnloadUnitsPerSecond + "/s within " + Cfg.UnloadRadius.ToString("F0", CultureInfo.InvariantCulture) + " m" +
+                " | air rates " + Cfg.AirLoadUnitsPerSecond + "/" + Cfg.AirUnloadUnitsPerSecond + "/s" +
                 " | air " + Cfg.AirCargoCapacity + ", ground " + Cfg.GroundCargoCapacity +
                 " | cooldown " + Cfg.DeliveryCooldownSeconds.ToString("F0", CultureInfo.InvariantCulture) + " s" +
-                " | bonus " + (Cfg.PersonalBonus.Enabled ? RewardSettings() +
-                    (KohCredits.Available ? " (KoH linked)" : " (KoH not found)") : "off"));
+                " | rewards " + RewardSettings() + (KohCredits.Available ? " (KoH linked)" : " (KoH not found)"));
+            ShowHarvesterStatus(caller);
+            ShowAITransportStatus(caller);
             Unit unit = caller != null ? caller.ControlledUnit : null;
             if (unit == null || !IsTransport(unit)) return;
             int amount = CargoByTransport.TryGetValue(unit.GetInstanceID(), out Cargo cargo) ? cargo.Amount : 0;
@@ -282,13 +312,14 @@ namespace Si_Logistics
 
         private static void ShowHelp(Player caller)
         {
-            string command = "/" + Cfg.Commands.PlayerCommand;
-            Reply(caller, command + " [status|help]  |  admin: " + command +
-                " on|off, bonus on|off, share <0..1>, capacity air|ground <n>, rate load|unload <n>, radius load|unload <m>, cooldown <s>, debug on|off, reload");
+            Reply(caller, "/logistics or /logi: [status|help]. Status is available to everyone.");
+            Reply(caller, "Admin: on|off; share <0..1>; transfershare <0..1>; capacity air|ground <positive integer>.");
+            Reply(caller, "Admin: rate load|unload <positive integer> (ground); radius load|unload <metres> (player transfers).");
+            Reply(caller, "Admin: cooldown <seconds>; debug on|off; reload; harvesterfix on|off; aitransport on|off.");
         }
 
         private static bool TryParseFloat(string text, out float value) =>
-            float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
+            float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value) && !float.IsNaN(value) && !float.IsInfinity(value);
 
         // caller == null: server console.
         private static void Reply(Player caller, string text)
@@ -301,11 +332,11 @@ namespace Si_Logistics
         {
             if (!Game.GetIsServer()) return;
             UpdateHarvesterFix();
-            // Earned rewards still mature if an admin disables new transfers/bonuses.
+            // Earned rewards are retained while the master switch pauses payouts.
             try { PayDueRewards(); }
             catch (Exception exception) { MelonLogger.Warning("Logistics payout: " + exception.Message); }
             if (!AITransportActive && AITransportJobs.Count > 0) ResetAITransports(true);
-            if ((!Cfg.Enabled && !AITransportActive) || !MatchAcceptsRewards) return;
+            if (!Cfg.Enabled || !MatchAcceptsRewards) return;
             _elapsed += Time.deltaTime;
             if (_elapsed < 1f) return;
             _elapsed = 0f;
@@ -323,11 +354,11 @@ namespace Si_Logistics
             return Cfg.TransportUnits.Exists(n => n.Equals(name, StringComparison.OrdinalIgnoreCase));
         }
 
-        private static void Tick()
+        private static void TickCore()
         {
             if (Unit.Units == null || Structure.Structures == null) return;
-            var active = new HashSet<int>();
-            foreach (Unit transport in Unit.Units)
+            var active = TickActiveVehicles; active.Clear();
+            foreach (Unit transport in TickTransports)
             {
                 if (Cfg.Debug && transport != null && transport.ControlledBy != null && transport.DriverCompartment != null && transport.ObjectInfo != null)
                 {
@@ -337,33 +368,47 @@ namespace Si_Logistics
                 if (!IsTransport(transport)) continue;
                 int vehicleId = transport.GetInstanceID();
                 active.Add(vehicleId);
-                // Assigned AI jobs must run before the player-only transfer gate.
-                if (AITransportJobs.TryGetValue(vehicleId, out var aiJob))
+                if (TransportErrorUntil.TryGetValue(vehicleId, out float retryAt) && Time.unscaledTime < retryAt) continue;
+                try
                 {
-                    if (TickAITransport(aiJob)) continue;
+                    // Assigned AI jobs must run before the player-only transfer gate.
+                    if (AITransportJobs.TryGetValue(vehicleId, out var aiJob))
+                    {
+                        if (TickAITransport(aiJob)) continue;
+                    }
+                    if (!Cfg.Enabled || transport.ControlledBy == null)
+                    {
+                        if (CargoByTransport.TryGetValue(vehicleId, out Cargo unattended)) SetTransfer(transport, unattended, null);
+                        continue;
+                    }
+                    if (!CargoByTransport.TryGetValue(vehicleId, out Cargo cargo))
+                    {
+                        cargo = new Cargo();
+                        CargoByTransport.Add(vehicleId, cargo);
+                    }
+                    if (Cfg.Debug) DiagnoseNearby(transport, cargo);
+                    if (Time.unscaledTime < cargo.CooldownUntil) { SetTransfer(transport, cargo, null); continue; }
+                    if (cargo.Amount > 0 && TryUnload(transport, cargo)) continue;
+                    if (cargo.Amount < CapacityFor(transport) && TryLoad(transport, cargo)) continue;
+                    SetTransfer(transport, cargo, null);
                 }
-                if (!Cfg.Enabled || transport.ControlledBy == null)
+                catch (Exception error)
                 {
-                    if (CargoByTransport.TryGetValue(vehicleId, out Cargo unattended)) SetTransfer(transport, unattended, null);
-                    continue;
+                    TransportErrorUntil[vehicleId] = Time.unscaledTime + 10f;
+                    MelonLogger.Error("Logistics transport=" + vehicleId + " update failed; retry in 10s: " + error);
                 }
-                if (!CargoByTransport.TryGetValue(vehicleId, out Cargo cargo))
-                {
-                    cargo = new Cargo();
-                    CargoByTransport.Add(vehicleId, cargo);
-                }
-                if (Cfg.Debug) DiagnoseNearby(transport, cargo);
-                if (Time.unscaledTime < cargo.CooldownUntil) { SetTransfer(transport, cargo, null); continue; }
-                if (cargo.Amount > 0 && TryUnload(transport, cargo)) continue;
-                if (cargo.Amount < CapacityFor(transport) && TryLoad(transport, cargo)) continue;
-                SetTransfer(transport, cargo, null);
             }
             // Cargo on a destroyed vehicle is lost, like a destroyed harvester's cargo.
-            var stale = new List<int>();
+            var stale = TickStaleCargo; stale.Clear();
             foreach (var pair in CargoByTransport)
                 if (!active.Contains(pair.Key)) stale.Add(pair.Key);
             foreach (int vehicleId in stale) CargoByTransport.Remove(vehicleId);
-            foreach (var pair in new List<KeyValuePair<int, AITransportJob>>(AITransportJobs))
+            TickStaleErrors.Clear();
+            foreach (var pair in TransportErrorUntil) if (!active.Contains(pair.Key)) TickStaleErrors.Add(pair.Key);
+            foreach (int id in TickStaleErrors) TransportErrorUntil.Remove(id);
+            TickJobSnapshot.Clear();
+            foreach (var pair in AITransportJobs) TickJobSnapshot.Add(pair);
+            foreach (var pair in TickJobSnapshot)
                 if (!active.Contains(pair.Key)) CancelAITransport(pair.Value, "transport destroyed or no longer eligible", false);
         }
 
@@ -414,8 +459,10 @@ namespace Si_Logistics
         private static bool TryLoad(Unit transport, Cargo cargo, Unit assignedHarvester = null, float? loadRadius = null)
         {
             bool harvesterInRange = false;
-            foreach (Unit harvester in Unit.Units)
+            int count = assignedHarvester ? 1 : TickHarvesters.Count;
+            for (int i = 0; i < count; i++)
             {
+                Unit harvester = assignedHarvester ? assignedHarvester : TickHarvesters[i];
                 if ((assignedHarvester != null && harvester != assignedHarvester) || harvester == null || harvester.ObjectInfo == null || harvester.ObjectInfo.UnitType != UnitType.Harvester ||
                     harvester.Team != transport.Team || harvester.DamageManager == null ||
                     harvester.DamageManager.IsDestroyed || !harvester.IsResourceHolder ||
@@ -425,7 +472,7 @@ namespace Si_Logistics
                 var resource = transport.Team.UsableResource;
                 int before = harvester.GetStoredResources(resource);
                 if (before == 0) continue;
-                int requested = Math.Min(Math.Min(before, Math.Max(1, Cfg.LoadUnitsPerSecond)),
+                int requested = Math.Min(Math.Min(before, Math.Max(1, transport.IsFlyingType ? Cfg.AirLoadUnitsPerSecond : Cfg.LoadUnitsPerSecond)),
                                          Math.Max(0, CapacityFor(transport) - cargo.Amount));
                 if (requested <= 0) continue;
                 Player harvesterDriver = DriverOf(harvester);
@@ -459,13 +506,15 @@ namespace Si_Logistics
 
         private static bool TryUnload(Unit transport, Cargo cargo, Structure assignedRefinery = null, float? unloadRadius = null)
         {
-            foreach (Structure refinery in Structure.Structures)
+            int count = assignedRefinery ? 1 : TickRefineries.Count;
+            for (int i = 0; i < count; i++)
             {
+                Structure refinery = assignedRefinery ? assignedRefinery : TickRefineries[i];
                 if ((assignedRefinery != null && refinery != assignedRefinery) || refinery == null || refinery.Team != transport.Team ||
                     refinery.ResourceDepositPoints == null || refinery.ResourceDepositPoints.Count == 0 ||
                     refinery.DamageManager == null || refinery.DamageManager.IsDestroyed ||
                     Vector3.Distance(refinery.transform.position, transport.transform.position) > (unloadRadius ?? Cfg.UnloadRadius)) continue;
-                int attempted = Math.Min(Math.Min(cargo.Amount, Math.Max(1, Cfg.UnloadUnitsPerSecond)),
+                int attempted = Math.Min(Math.Min(cargo.Amount, Math.Max(1, transport.IsFlyingType ? Cfg.AirUnloadUnitsPerSecond : Cfg.UnloadUnitsPerSecond)),
                                          Math.Max(0, transport.Team.RemainingResourceCapacity));
                 if (attempted <= 0) return false;
                 Player driver = DriverOf(transport);

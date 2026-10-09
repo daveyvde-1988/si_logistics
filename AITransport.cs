@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using HarmonyLib;
 using MelonLoader;
+using Newtonsoft.Json;
 using Silica.AI;
 using SilicaAdminMod;
 using UnityEngine;
@@ -11,8 +12,17 @@ namespace Si_Logistics
     public sealed class AITransportConfig
     {
         public bool Enabled = false;
-        public float DropshipLoadRadius = 150f;
-        public float DropshipUnloadRadius = 150f;
+        [JsonProperty("airloadradius")] public float AirLoadRadius = 150f;
+        [JsonProperty("airunloadradius")] public float AirUnloadRadius = 150f;
+        [JsonProperty("groundloadradius")] public float GroundLoadRadius = 40f;
+        [JsonProperty("groundunloadradius")] public float GroundUnloadRadius = 65f;
+        public float NearHarvesterDistanceMetres = 300f;
+        public float MediumHarvesterDistanceMetres = 600f;
+        public int NearGroundTransports = 2, NearAirTransports = 1;
+        public int MediumGroundTransports = 3, MediumAirTransports = 1;
+        public int FarGroundTransports = 4, FarAirTransports = 2;
+        public float ReassignmentCheckSeconds = 10f;
+        public float NoProgressTimeoutSeconds = 120f;
     }
 
     public sealed partial class LogisticsMod
@@ -27,16 +37,24 @@ namespace Si_Logistics
             internal Vector3 Destination, TargetPosition;
             internal string Status;
             internal int Attempts;
+            internal int ServiceFrame = -1;
+            internal Vector3 ServiceCenter, ServiceFrom, ServicePoint;
+            internal float ServiceRadius;
+            internal Structure ServiceRefinery;
+            internal bool ServiceFound;
+            internal ResourceArea AssignedArea;
+            internal Unit AvoidHarvester;
+            internal float AvoidUntil, NextAllocation, LastProgress, BestDistance = float.MaxValue;
+            internal bool Parking;
+            internal Vector3 ParkingPoint;
         }
         private static readonly Dictionary<int, AITransportJob> AITransportJobs = new Dictionary<int, AITransportJob>();
         private static bool AITransportInstalled;
         private static int AITransportOwnOrder;
-        private static bool AITransportActive => AITransportInstalled && Cfg.AITransport.Enabled && Game.GetIsServer() && MatchAcceptsRewards;
+        private static bool AITransportActive => AITransportInstalled && Cfg.Enabled && Cfg.AITransport.Enabled && Game.GetIsServer() && MatchAcceptsRewards;
 
-        private static bool UsesAIDropshipRanges(Unit u) => u && u.ObjectInfo &&
-            u.ObjectInfo.DisplayName.ToString().Equals("Dropship", StringComparison.OrdinalIgnoreCase);
-        private static float AILoadRadius(Unit u) => UsesAIDropshipRanges(u) ? Cfg.AITransport.DropshipLoadRadius : Cfg.LoadRadius;
-        private static float AIUnloadRadius(Unit u) => UsesAIDropshipRanges(u) ? Cfg.AITransport.DropshipUnloadRadius : Cfg.UnloadRadius;
+        private static float AILoadRadius(Unit u) => u && u.IsFlyingType ? Cfg.AITransport.AirLoadRadius : Cfg.AITransport.GroundLoadRadius;
+        private static float AIUnloadRadius(Unit u) => u && u.IsFlyingType ? Cfg.AITransport.AirUnloadRadius : Cfg.AITransport.GroundUnloadRadius;
 
         private void InstallAITransport()
         {
@@ -82,32 +100,27 @@ namespace Si_Logistics
                     " target=" + HarvestObjectId(h) + " queued=" + issueParams.QueueOrder);
             // A queued order must not jump ahead of the player's earlier commands.
             if (issueParams.QueueOrder || definition != OrderDefinitionRegistry.Defend || !AIHarvesterTarget(h, u.Team)) return;
-            var job = new AITransportJob { Transport = u, Harvester = h, Team = u.Team };
+            var job = new AITransportJob { Transport = u, Team = u.Team, LastProgress = Time.time };
             AITransportJobs.Add(u.GetInstanceID(), job);
-            AILog(job, "assigned to harvester; loading");
+            if (CanAssignAIHarvester(job, h)) AssignAIHarvester(job, h);
+            else AILog(job, "enrolled in logistics duty; selecting available harvester");
         }
 
-        private static void OnAITransportCommand(Player caller, string args)
+        private static void ShowAITransportStatus(Player caller)
         {
-            string[] parts = (args ?? "").Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            string sub = parts.Length > 1 ? parts[1].ToLowerInvariant() : "status";
-            if (sub != "on" && sub != "off" && sub != "status") { Reply(caller, "Usage: /AItransport on|off|status"); return; }
-            if (sub != "status")
-            {
-                if (caller != null && (!caller.IsAdmin() || !AdminMethods.PowerInPowers(Power.Generic, caller.GetAdminPowers())))
-                { Reply(caller, "Admin Generic permission required."); return; }
-                Cfg.AITransport.Enabled = sub == "on";
-                if (!Cfg.AITransport.Enabled) ResetAITransports(true);
-                SaveConfig();
-            }
             Reply(caller, "AI transport " + (Cfg.AITransport.Enabled ? "ON" : "OFF") + " | assigned " + AITransportJobs.Count +
-                " | right-click a friendly harvester with an AI transport to assign; a new order cancels. Details in server log.");
-            MelonLogger.Msg("[AITransport] status enabled=" + Cfg.AITransport.Enabled + " active=" + AITransportActive + " assigned=" + AITransportJobs.Count);
+                " | right-click a friendly harvester to enrol in automatic logistics duty; a new order cancels. Details in server log.");
+            if (!Cfg.Enabled && Cfg.AITransport.Enabled) Reply(caller, "AI transport paused by Logistics master switch.");
+            if (!Cfg.Debug) return;
+            MelonLogger.Msg("[AITransport] status enabled=" + Cfg.AITransport.Enabled + " active=" + AITransportActive + " duty=" + AITransportJobs.Count +
+                " bands=" + Cfg.AITransport.NearHarvesterDistanceMetres + "/" + Cfg.AITransport.MediumHarvesterDistanceMetres +
+                " groundLimits=" + Cfg.AITransport.NearGroundTransports + "/" + Cfg.AITransport.MediumGroundTransports + "/" + Cfg.AITransport.FarGroundTransports +
+                " airLimits=" + Cfg.AITransport.NearAirTransports + "/" + Cfg.AITransport.MediumAirTransports + "/" + Cfg.AITransport.FarAirTransports);
             foreach (var j in AITransportJobs.Values)
             {
                 int amount = j.Transport && CargoByTransport.TryGetValue(j.Transport.GetInstanceID(), out var cargo) ? cargo.Amount : 0;
                 MelonLogger.Msg("[AITransport] transport=" + HarvestObjectId(j.Transport) + " harvester=" + HarvestObjectId(j.Harvester) +
-                    " refinery=" + HarvestObjectId(j.Refinery) + " delivering=" + j.Delivering + " cargo=" + amount +
+                    " patch=" + HarvestObjectId(j.AssignedArea) + " refinery=" + HarvestObjectId(j.Refinery) + " delivering=" + j.Delivering + " cargo=" + amount +
                     " loadRadius=" + AILoadRadius(j.Transport) + " unloadRadius=" + AIUnloadRadius(j.Transport) +
                     " holding=" + j.Holding + " position=" + (j.Transport ? j.Transport.transform.position.ToString() : "destroyed") +
                     " destination=" + j.Destination + " status=" + j.Status);
@@ -162,31 +175,33 @@ namespace Si_Logistics
         private static bool TickAITransport(AITransportJob j)
         {
             var u = j.Transport;
-            if (!AITransportActive || !AITransportEligible(u) || u.Team != j.Team || !AIHarvesterTarget(j.Harvester, j.Team))
+            if (!AITransportActive || !AITransportEligible(u) || u.Team != j.Team)
             {
-                CancelAITransport(j, "disabled, target lost, team changed or player takeover", u && !u.PlayerControlled && DriverOf(u) == null);
+                CancelAITransport(j, "disabled, team changed or player takeover", u && !u.PlayerControlled && DriverOf(u) == null);
                 return false;
             }
             if (!CargoByTransport.TryGetValue(u.GetInstanceID(), out var cargo))
             { cargo = new Cargo(); CargoByTransport.Add(u.GetInstanceID(), cargo); }
-            if (!j.Delivering && cargo.Amount >= CapacityFor(u))
-            {
-                j.Delivering = true; j.Refinery = null; j.Holding = false; j.NextMove = 0; j.Attempts = 0;
-                AILog(j, "full; heading to refinery");
-            }
+            if (!j.Delivering && cargo.Amount >= CapacityFor(u)) BeginAIDelivery(j, "full; heading to refinery");
             if (j.Delivering && cargo.Amount == 0)
             {
-                j.Delivering = false; j.Refinery = null; j.Holding = false; j.NextMove = 0; j.Attempts = 0;
-                AILog(j, "empty; returning to assigned harvester");
+                j.Delivering = false; j.Refinery = null; j.NextAllocation = 0;
+                ReleaseAIHarvester(j);
+                AILog(j, "empty; selecting next collection assignment");
             }
+            if (!j.Delivering) AllocateAITransport(j, cargo);
             if (j.Delivering)
             {
-                if (!AIRefineryTarget(j.Refinery, j.Team) && Time.time >= j.NextRefinerySearch)
+                if (!AIRefineryTarget(j.Refinery, j.Team))
                 {
-                    j.NextRefinerySearch = Time.time + 5f;
-                    j.Refinery = ClosestAIRefinery(j);
-                    j.Holding = false; j.NextMove = 0;
-                    if (j.Refinery) AILog(j, "delivery refinery=" + j.Refinery.GetInstanceID());
+                    j.Refinery = null;
+                    if (Time.time >= j.NextRefinerySearch)
+                    {
+                        j.NextRefinerySearch = Time.time + 5f;
+                        j.Refinery = ClosestAIRefinery(j);
+                        j.Holding = false; j.NextMove = 0;
+                        if (j.Refinery) AILog(j, "delivery refinery=" + j.Refinery.GetInstanceID());
+                    }
                 }
                 if (!j.Refinery)
                 { AIHold(j); SetTransfer(u, cargo, null); AILog(j, "waiting for a reachable friendly refinery"); return true; }
@@ -197,13 +212,9 @@ namespace Si_Logistics
                         AILog(j, cargo.Amount == 0 ? "delivery complete" : "unloading");
                     else { SetTransfer(u, cargo, null); AILog(j, "waiting for team storage or transfer cooldown"); }
                 }
-                else
-                {
-                    SetTransfer(u, cargo, null);
-                    AIDrive(j, j.Refinery.transform.position, AIUnloadRadius(u), j.Refinery);
-                }
+                else { SetTransfer(u, cargo, null); AIDrive(j, j.Refinery.transform.position, AIUnloadRadius(u), j.Refinery); }
             }
-            else
+            else if (j.Harvester)
             {
                 if (Vector3.Distance(u.transform.position, j.Harvester.transform.position) <= AILoadRadius(u))
                 {
@@ -212,16 +223,14 @@ namespace Si_Logistics
                     {
                         int before = cargo.Amount;
                         TryLoad(u, cargo, j.Harvester, AILoadRadius(u));
+                        if (cargo.Amount > before) j.LastProgress = Time.time;
                         AILog(j, cargo.Amount > before ? "loading from assigned harvester" : "waiting for assigned harvester to mine");
                     }
-                    else { SetTransfer(u, cargo, null); AILog(j, "waiting for transfer cooldown"); }
+                    else { j.LastProgress = Time.time; SetTransfer(u, cargo, null); AILog(j, "waiting for transfer cooldown"); }
                 }
-                else
-                {
-                    SetTransfer(u, cargo, null);
-                    AIDrive(j, j.Harvester.transform.position, AILoadRadius(u));
-                }
+                else { SetTransfer(u, cargo, null); AIDrive(j, j.Harvester.transform.position, AILoadRadius(u)); }
             }
+            else { SetTransfer(u, cargo, null); ParkAITransport(j); }
             return true;
         }
 
@@ -229,7 +238,7 @@ namespace Si_Logistics
         {
             Structure best = null;
             float distance = float.MaxValue;
-            foreach (var s in Structure.Structures)
+            foreach (var s in AllocationRefineries)
             {
                 if (!AIRefineryTarget(s, j.Team)) continue;
                 float d = (s.transform.position - j.Transport.transform.position).sqrMagnitude;
@@ -250,6 +259,7 @@ namespace Si_Logistics
             { j.Attempts++; return; }
             if (!AIServicePosition(j, center, radius, out var destination, refinery))
             {
+                j.TargetPosition = center; // Respect NextMove after a stationary failed search.
                 AIHold(j); AILog(j, "no navigable transfer position; retrying");
                 return;
             }
@@ -264,6 +274,25 @@ namespace Si_Logistics
 
         private static bool AIServicePosition(AITransportJob j, Vector3 center, float radius, out Vector3 result, Structure refinery = null)
         {
+            // Selection and immediate dispatch often ask the exact same question.
+            // Reuse only inside the current tick/frame, never across moving-world updates.
+            var from = j.Transport.transform.position;
+            if (PerformanceTickActive && j.ServiceFrame == Time.frameCount && j.ServiceCenter.Equals(center) &&
+                j.ServiceFrom.Equals(from) && j.ServiceRadius == radius && j.ServiceRefinery == refinery)
+            {
+                if (Cfg.Debug) PerfServiceHits++;
+                result = j.ServicePoint; return j.ServiceFound;
+            }
+            if (Cfg.Debug) PerfSearches++;
+            bool found = FindAIServicePosition(j, center, radius, out result, refinery);
+            j.ServiceFrame = PerformanceTickActive ? Time.frameCount : -1;
+            j.ServiceCenter = center; j.ServiceFrom = from; j.ServiceRadius = radius;
+            j.ServiceRefinery = refinery; j.ServicePoint = result; j.ServiceFound = found;
+            return found;
+        }
+
+        private static bool FindAIServicePosition(AITransportJob j, Vector3 center, float radius, out Vector3 result, Structure refinery)
+        {
             result = Vector3.zero;
             if (float.IsNaN(radius) || float.IsInfinity(radius) || radius <= 0) return false;
             var u = j.Transport;
@@ -273,13 +302,13 @@ namespace Si_Logistics
             bool found = false;
             // The previous 40%/70% rings could both lie inside a refinery footprint.
             // Search the full usable range, not just the building's interior.
-            float[] rings = { 0.94f, 0.80f, 0.65f, 0.50f, 0.30f };
-            foreach (float fraction in rings)
+            foreach (float fraction in ServiceRings)
                 for (int n = 0; n < 32; n++)
                 {
                     float a = angle + n * Mathf.PI / 16f;
                     Vector3 candidate = center + new Vector3(Mathf.Cos(a) * radius * fraction, 0, Mathf.Sin(a) * radius * fraction);
                     if (Game.MainTerrain) candidate.y = Game.MainTerrain.SampleHeight(candidate) + Game.MainTerrain.transform.position.y;
+                    if (Cfg.Debug) PerfNavProbes++;
                     if (!u.GetPointValidForAI(candidate, out var nav)) continue;
                     ConsiderAIServicePoint(j, center, radius * 0.99f, nav, ref best, ref result, ref found);
                 }
@@ -322,6 +351,7 @@ namespace Si_Logistics
                 Vector3.Distance(point, center) > radius) return;
             var u = j.Transport;
             float score = (point - u.transform.position).sqrMagnitude;
+            if (score >= best) return; // Occupancy penalties can only increase this score.
             foreach (var other in AITransportJobs.Values)
             {
                 if (ReferenceEquals(other, j) || !other.Transport) continue;

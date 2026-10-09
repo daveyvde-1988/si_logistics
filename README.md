@@ -1,26 +1,103 @@
-# si_logistics
-Logistics mod for Silica
+# Si_Logistics (0.8.1)
 
-## Harvester fix (0.6.0)
+Server-side resource transfers, driver rewards, harvester routing and automatic
+transport duty, with consolidated controls and a performance/cleanup pass.
 
-Server-side controller for AI-driven human harvesters. Disabled by default; the
-normal Logistics transport transfers and rewards are independent of this switch.
+## Commands
+
+Every command below works with **/logistics** or **/logi**. Subcommands are
+case-insensitive, including Transfershare, Harvesterfix and AItransport.
+Admin means Admin Mod Generic permission; server-console callers are allowed.
+Successful setting changes save to UserData/Logistics_cfg/Si_Logistics_Config.json.
+
+| Command | Access | Function |
+| --- | --- | --- |
+| /logistics or /logistics status | Everyone | Settings, effective feature states, reward rates and cargo in your controlled transport. |
+| /logistics help | Everyone | List available commands. |
+| /logistics on/off | Admin | Master switch for transfers, rewards, Harvesterfix and AItransport. |
+| /logistics share <0–1> | Admin | Transport unloading AND independent harvester refinery reward rate; default 0.10. |
+| /logistics transfershare <0–1> | Admin | Harvester driver's reward for a harvester-to-transport pickup; default 0.08. |
+| /logistics capacity air <n> | Admin | Aircraft cargo capacity; positive integer. |
+| /logistics capacity ground <n> | Admin | Ground transport cargo capacity; positive integer. |
+| /logistics rate load <n> | Admin | Ground loading units per second; positive integer. |
+| /logistics rate unload <n> | Admin | Ground unloading units per second; positive integer. |
+| /logistics radius load <metres> | Admin | Player-driven pickup radius; finite number greater than zero. |
+| /logistics radius unload <metres> | Admin | Player-driven unloading radius; finite number greater than zero. |
+| /logistics cooldown <seconds> | Admin | Delivery cooldown AND delay for new driver reward payout windows; finite, zero or greater. |
+| /logistics debug on/off | Admin | Diagnostics; status also dumps detailed harvester/transport state while enabled. |
+| /logistics reload | Admin | Reload JSON settings. |
+| /logistics harvesterfix on/off | Admin | Harvester controller sub-switch; defaults ON. |
+| /logistics aitransport on/off | Admin | Automatic transport duty sub-switch; defaults OFF. |
+
+These are the complete chat controls. The standalone /harvesterfix and
+/aitransport commands, bonus toggle and configurable extra command aliases were
+removed. Use /logistics status for both feature summaries. Debug status retains
+per-vehicle diagnostic dumps without adding separate status commands.
+
+## Master switch and rewards
+
+/logistics off hands harvesters back to vanilla, stops managed transport duty,
+ends transfer sessions and pauses reward accrual/payouts. Surviving cargo and
+already-earned pending rewards remain; feature sub-switch settings are retained.
+Re-enabling resumes eligible harvesting and pending payouts, but transports need
+a fresh Follow assignment because disabling releases their duty. Match cleanup
+still clears temporary cargo/rewards as before.
+
+Rewards are always enabled under the master switch. PersonalBonus.Share is the
+single rate for transport deliveries and independently driven harvester refinery
+deliveries. PersonalBonus.TransferShare is the separate pickup reward; it retains
+the existing harvester-driver recipient and player-driven transfer eligibility.
+The Transfershare description in the requested command table duplicated unloading;
+this command controls the distinct harvester-to-transport reward, not a second
+unloading rate. Both reward types use DeliveryCooldownSeconds for payout batching.
+Changing a rate affects newly earned rewards; changing cooldown affects new
+reward windows and new delivery cooldowns, not timers already scheduled.
+Zero means payout on the next update; unavailable reward-provider retries have a
+minimum one-second interval. Rewards still require the existing KoH credit API.
+
+Old PersonalBonus.Enabled, HarvesterDepositShare, PayoutDelaySeconds and MinBatch
+keys are removed/ignored. Legacy HarvesterTransferShare migrates to TransferShare
+when the new key is absent. Share and cooldown are now the source of truth.
+Other tuned settings are preserved, including feature flags already present in
+an existing CFG; the ON/OFF defaults above apply to new/missing settings.
+
+## CFG-only settings and preserved functions
+
+The existing per-class settings remain available in JSON: airloadunitspersecond
+and airunloadunitspersecond (500/s defaults, AI and player aircraft), and the four
+AItransport ground/air load/unload radii. Thus the rate commands change ground
+rates; radius commands change player ranges. This preserves separate air and AI
+settings introduced in 0.7.0. /logistics reload applies edited JSON values.
+
+Other retained options support the mod's behaviour: allowed transport types,
+progress chat, optional sounds, reward announcements, hidden command chat,
+harvester patch/refinery reservation limits and spacing, pickup waiting time,
+and AI transport allocation limits/check intervals. The sections below document
+these functions. Reload rebuilds harvester reservations only when validated
+harvester settings change; changes to rates, sounds or rewards preserve them.
+
+
+## Harvester fix
+
+Server-side controller for AI-driven human harvesters. Enabled by default.
+The master Logistics switch must also be enabled. Transport transfers and rewards
+are unaffected by the harvesterfix sub-switch.
 With the fix off, its patches pass through to vanilla harvester AI.
 
-- `/harvesterfix on` and `/harvesterfix off`: require Admin Mod Generic permission;
+- `/logistics harvesterfix on` and `/logistics harvesterfix off`: require Admin Mod Generic permission;
   save the setting to the config. Disabling releases the controller's reservations
   and hands its waiting vehicles back to native harvesting/deposit orders.
-- `/harvesterfix status`: available to everyone; shows settings and reservation counts,
-  and writes per-harvester phase, cargo, dock state, queue slot and native bay owners
+- `/logistics status`: available to everyone; shows settings and reservation counts,
+  and, when debug is enabled, writes per-harvester phase, cargo, dock state, queue slot and native bay owners
   to the server log under `[HarvesterFix]`.
-- `/logistics reload`: reloads settings and releases existing reservations so the
-  new limits apply. Reservations are rebuilt automatically when enabled.
+- `/logistics reload`: reloads settings. Changed harvester settings release and
+  rebuild reservations when enabled; unrelated setting changes preserve them.
 
 Config: `UserData/Logistics_cfg/Si_Logistics_Config.json`:
 
 ```json
 "harvesterfix": {
-  "Enabled": false,
+  "Enabled": true,
   "MaximumReservationsPerRefinery": 5,
   "NearPatchDistanceMetres": 400.0,
   "MediumPatchDistanceMetres": 800.0,
@@ -40,7 +117,7 @@ area, not per resource cell. Each assignment is a persistent home patch: the slo
 stays reserved through mining, transport top-ups, travel to the refinery, queuing,
 unloading, and the return trip. Changing refineries does not change the home patch.
 Depletion, an explicit different harvesting assignment, move/stop/combat orders,
-destruction, team changes, player takeover, disabling/reloading the feature, and
+destruction, team changes, player takeover, disabling the feature or reloading changed harvester settings, and
 match/scene cleanup release the assignment. Manual unload orders preserve it.
 
 Patch limits use horizontal straight-line distance from the patch's SignalCenter
@@ -98,8 +175,9 @@ harvesters retain driver control. Repeated transfer ticks extend the timer witho
 repeatedly restarting movement. Status logs include remaining wait time, patch
 reservation, mining and extraction state.
 At the patch it continues mining when there is space, waits when full, and stays
-even if the patch becomes depleted. After the grace period, normal return/patch
-selection resumes when the timer expires. A partially loaded harvester
+only while the patch has resources. Depletion clears the grace period immediately,
+and further pickups at that depleted patch cannot restart it. Normal return/patch
+selection resumes on the next controller update. A partially loaded harvester
 leaving a depleted patch unloads first when an eligible refinery is closer than
 the next available patch; this applies to any nonempty partial load, including
 half-full harvesters. The separate AI transport prototype below can automate the transport's driving.
@@ -129,7 +207,7 @@ Output: `bin/Release/netstandard2.1/Si_Logistics.dll`. Install only this DLL int
 the server's `Mods` directory while the server is stopped. It loads at next start.
 Compilation does not establish in-game behaviour.
 
-1. Confirm status starts OFF and ordinary harvesting remains vanilla; enable it.
+1. Confirm harvesterfix defaults ON; disable it and verify vanilla harvesting, then re-enable.
 2. Build multiple harvesters: check factory exit, 10-second delay, distinct travel
    reservations with the 1/2/3 distance bands. Confirm the same home patch stays
    reserved while its owner unloads and is selected again on its return.
@@ -150,84 +228,152 @@ For queue retesting, first fill several harvesters with the fix off and occupy a
 refineries; enable the fix and check that they retry. Then issue deposit orders to
 several harvesters at the same refinery. After the first unloads and clears the
 bay, check the next vehicle advances within the configured check interval. If one
-stalls, run `/harvesterfix status` before moving it so the log captures the state.
+stalls, run `/logistics status` before moving it so the log captures the state.
 
-## AI transport prototype (0.6.3)
+## Automatic AI transport duty (0.7.0)
 
-0.6.2 expands the refinery destination search to the outer transfer radius and
-uses native refinery approach points at their authored heights, with native
-deposit positions as a fallback. The old inner rings could reject every refinery
-before issuing any driving order. Failed selection now logs refinery geometry
-and retries every five seconds. Transfer radius and accounting are unchanged.
-Native approach fallbacks may share space with harvesters; check traffic in-game.
+/logistics aitransport on|off controls transport duty beneath the master switch. On/off requires
+Admin Generic permission and persists in the existing JSON CFG. Right-clicking
+a friendly harvester with an eligible AI transport enrols it in logistics duty.
+The game's accepted immediate Defend order is the native friendly-target Follow
+trigger; explicit Defend also enrols. Queued orders do not enrol. Unassigned AI
+transports retain vanilla behaviour. A new accepted commander order cancels duty;
+a new Follow enrols again with the clicked harvester as the initial preference.
+That preference obeys collection limits and productive-patch eligibility.
 
-0.6.1 connects assigned AI jobs to the one-second transfer update before the
-player-driver exclusion. In 0.6.0, assignments were recorded but never ticked,
-so transports retained native Follow and performed no automated transfers.
+Duty persists when a harvester is destroyed or changes patch. Collection slots
+are reserved immediately, released when leaving for delivery, and reassigned
+after full unloading. Productive AI harvesters are ranked by pickup travel,
+existing allocation, available cargo and distance to the nearest friendly
+refinery. Ground travel receives a higher cost than air travel. Distances are
+geometric estimates, not measured route times or guaranteed maximum throughput.
+Human-controlled harvesters and harvesters docking/queuing are not automatically
+selected. In-transit harvesters with a productive patch can be selected.
 
-`/AItransport on|off|status` controls AI hauling independently of player Logistics.
-On/off requires Admin Generic permission and persists in the existing JSON CFG:
+| Harvester distance to closest friendly refinery (horizontal) | Ground OR air |
+| --- | --- |
+| Up to and including 300m | 2 ground OR 1 air |
+| Over 300m, up to and including 600m | 3 ground OR 1 air |
+| Over 600m | 4 ground OR 2 air |
+
+The allowance is shared: each ground vehicle uses 1/GroundLimit and each air
+vehicle uses 1/AirLimit; the total may not exceed 1. For example, the far tier
+allows two ground plus one air. This does not add both maximum fleets together.
+Zero disables that vehicle class in that band. Band distance is measured from
+the harvester's current position. Changing bands/config may release excess
+collectors on their next allocation check; cargo stays aboard.
+
+A productive assignment is kept while progress continues. Depletion, patch
+changes, target destruction, exceeding the current limit or the progress timeout
+trigger reallocation. Progress means cargo received or at least 10m improvement
+in the closest approach distance; there is no arbitrary maximum journey time.
+A stalled target is excluded for one timeout period before being eligible again.
+Partial loads are delivered when no collector slot exists or a reachable refinery
+is closer than the next selected harvester. Full loads always finish delivery.
+Empty idle transports attempt to park outside refinery transfer/bay traffic and
+retry. If no navigable parking point exists they hold in place. No friendly
+refinery/full team storage retains cargo and waits rather than discarding it.
+
+AI settings under the existing AItransport category (illustrative defaults):
 
 ```json
 "AItransport": {
   "Enabled": false,
-  "DropshipLoadRadius": 150.0,
-  "DropshipUnloadRadius": 150.0
+  "airloadradius": 150.0,
+  "airunloadradius": 150.0,
+  "groundloadradius": 40.0,
+  "groundunloadradius": 65.0,
+  "NearHarvesterDistanceMetres": 300.0,
+  "MediumHarvesterDistanceMetres": 600.0,
+  "NearGroundTransports": 2,
+  "NearAirTransports": 1,
+  "MediumGroundTransports": 3,
+  "MediumAirTransports": 1,
+  "FarGroundTransports": 4,
+  "FarAirTransports": 2,
+  "ReassignmentCheckSeconds": 10.0,
+  "NoProgressTimeoutSeconds": 120.0
 }
 ```
 
-After enabling, select an AI transport as commander and right-click a friendly
-harvester. Native friendly-unit following resolves to Defend; an explicit Defend
-order on that harvester also assigns hauling. Only accepted, immediate orders
-activate it; queued Follow orders retain native behaviour. Existing followers are
-not adopted automatically: issue a fresh right-click after enabling.
+Legacy DropshipLoadRadius/DropshipUnloadRadius migrate to the corresponding
+new air fields when those fields are absent. Missing ground fields inherit the
+ordinary LoadRadius/UnloadRadius from existing configs. Aircraft classification
+uses IsFlyingType, covering both factions' allowed aircraft. Player-driven ranges
+remain LoadRadius/UnloadRadius. AI ranges apply to destination selection and the
+actual transfers, with altitude included in the 3D transfer distance.
 
-The assigned transport approaches only that harvester, stays in transfer range
-until full, selects the closest friendly deposit structure with a navigable
-transfer position, fully unloads and repeats. Multiple transports may share one
-harvester. Transfers reuse the existing TransportUnits list, air/ground capacity,
-load/unload rates, radii, cooldown and cargo ledger. Unassigned AI transports remain
-excluded. Player transfers still obey the main Logistics Enabled switch; assigned
-AI hauling obeys AItransport.Enabled independently. No driver reward is generated
-for an AI delivery. Each successful pickup invokes the existing harvester wait
-timer (requires harvesterfix enabled); merely waiting in range does not extend it.
+At the top level of the Logistics CFG, airloadunitspersecond and
+airunloadunitspersecond default to 500 each. These apply to BOTH player-driven
+and assigned AI aircraft; ground vehicles retain LoadUnitsPerSecond and
+UnloadUnitsPerSecond. Capacity, actual resource accounting, cooldowns and rewards
+are unchanged. AI deliveries do not award a driver bonus. Edit CFG then use
+/logistics reload; changed harvester settings rebuild reservations and AI
+collection allowances are reconsidered. Air rates accept 1–100000, radii 1–2000m,
+counts 0–32; invalid non-finite radii/times use defaults.
 
-A new accepted external command, including a queued command, cancels the old
-assignment. A new immediate Follow/Defend on a harvester replaces it. Player
-takeover, loss of either unit, team changes, disabling and match/scene cleanup
-release assignments. Disabling stops managed AI movement; it does not erase
-surviving cargo. Cancelled cargo can be delivered by a player or a reassigned AI
-transport. Destroyed vehicles lose cargo; a transport changing teams loses its
-old-team ledger. Assignments and cargo are not persisted across matches/restarts.
+Each successful pickup still invokes the existing harvester top-up timer when
+harvesterfix is enabled, but depleted patches cannot establish or prolong that
+hold. AI collectors stop targeting depleted patches even if the harvester has
+residual cargo, allowing normal harvesting/refinery routing to resume.
 
-Movement is native AI Move/Stop, with navigation-projected approach positions
-and spacing between assigned transports. Transport deliveries use the existing
-range trigger, not a harvester docking bay or harvester refinery queue. Full team
-storage holds a delivery until room exists; no friendly refinery holds the full
-transport until one becomes available. Depleted harvesters are still followed
-as they resume harvesting elsewhere. Terrain projection does not prove route
-reachability, and large vehicles, narrow lanes, flight altitude and heavy traffic
-need live testing. This is not a transport traffic/queue controller.
+With debug enabled, /logistics status logs duty, collection target/patch, refinery, cargo, effective
+radii, band limits and movement status under [AITransport]. Assignment and phase
+changes log automatically. Native Move/Stop and collision avoidance still handle
+travel. Refinery approach fallbacks may overlap harvester traffic; this is not a
+traffic queue controller. Terrain projection cannot guarantee path reachability.
+Player takeover, transport destruction, team change, disabling and match/scene
+cleanup end duty; surviving same-team cargo remains usable after cancellation.
+Assignments/cargo are not saved across matches or server restarts.
 
-`/AItransport status` writes assignments, target IDs, cargo, delivery state and
-destinations to the server log under `[AITransport]`. Assignment, cancellation,
-accepted harvester-target commands and phase changes are logged automatically.
-If a right-click does not assign, enable `/logistics debug on`, repeat it and
-capture status to distinguish command resolution from navigation/transfer issues.
+### Focused live checks
 
-Focused prototype checks: one transport performs several full cycles; two or more
-share one harvester; Move/Stop cancels; retargeting changes only that transport;
-player takeover retains cargo; destroy either target/refinery; fill team storage;
-toggle AI transport off/on; verify player-driven loading and unloading still work.
+1. Enrol ground and air vehicles on a near patch; verify shared limits and excess
+   vehicles selecting other harvesters or waiting. Repeat at 300m/600m boundaries.
+2. Deplete a patch during pickups: harvester leaves without a renewed 120s hold;
+   transports reassign or deliver partial loads without requiring new orders.
+3. Destroy a collection harvester, then verify its transports stay on duty.
+4. Watch several delivery cycles and mixed-faction aircraft loading at 500/s;
+   confirm player aircraft rates change but their transfer radii do not.
+5. Move/Stop, player takeover, disable/re-enable, full storage, destroyed refinery,
+   no productive patches and prolonged blocked paths retain correct cargo/control.
 
-### AI Dropship transfer ranges (0.6.3)
+## Performance and cleanup (0.8.1)
 
-Assigned AI Dropships use their own pickup and unloading radii, both defaulting
-to 150m. Both navigation destination selection and actual transfers use these
-values, measured in 3D so flight altitude counts. Edit AItransport.DropshipLoadRadius
-and AItransport.DropshipUnloadRadius in the JSON CFG and run /logistics reload.
-Values are clamped to 1–2000m; non-finite values fall back to 150m.
-Ground transports, Shuttles and player-driven Dropships keep the ordinary
-LoadRadius/UnloadRadius settings. /AItransport status logs each assignment’s
-effective radii. Check an AI Dropship loading, delivering and returning, then
-verify that ground and player-driven transfer ranges remain as configured.
+- A synchronous transfer tick builds reusable lists of harvesters, transports and
+  deposit structures once. Allocation scans use those lists; direct assigned
+  transfers inspect only the assigned target. Live team, destruction, cargo,
+  productive-patch and reservation checks remain in place.
+- Nearest-refinery distances for harvesters are reused within that tick. Lists
+  and distances are cleared in a finally block; no world snapshot survives it.
+- Identical approach queries may reuse their result only in the same tick/frame,
+  for the same transport position, target centre, radius and refinery. There is
+  no persistent navigation cache to invalidate after terrain or target changes.
+  Candidate scoring skips occupancy work when the candidate already scores worse;
+  scoring rules and native-approach fallbacks are unchanged. Stationary failed
+  movement searches respect the existing five-second retry interval.
+- Reward accounts are examined when the earliest payout is due, not every frame.
+  Native deposit tracking reuses a per-thread, bounded pool of cleared receipts,
+  retaining nested-call attribution and actual accepted-resource accounting.
+  Neither reward rates nor payout-window semantics change.
+- Reusable tick scratch collections replace routine list/set allocations. Each
+  transport's update is isolated: an exception logs its ID and backs off for ten
+  seconds while the rest of the fleet continues. Match/scene cleanup clears the
+  failure backoff; cargo accounting is not reset by this recovery.
+- Reload compares validated harvester settings and rebuilds reservations only
+  when they differ. Master disable still releases both controllers immediately.
+
+Enable /logistics debug on for [LogisticsPerf] summaries every 30 seconds:
+transfer tick count, average/max milliseconds, approach search count, navigation
+probe count and same-frame cache hits. This measures the transfer/allocation
+loop, not the separately patched native mining/harvester updates. Counters are
+inactive without debug; verbose existing transfer diagnostics still add overhead
+while debugging. Disable debug again after collecting a sample.
+
+The code removes identifiable repeated work, but no measured speedup is claimed:
+the available pre-change log was from 0.7.0 and did not directly time this loop.
+The release build is compilation validation, not an in-game benchmark. Live
+checks: mixed ground/air hauling through depletion, native harvester and pickup
+rewards (including zero cooldown), unchanged shared collection limits, and reload
+of a non-harvester setting preserving queue order/home patches. Compare populated
+matches at similar unit counts when reviewing timing logs.
