@@ -4,6 +4,99 @@
   "LogisticsScore": true,
   "ScoreUnload": 2,
   "ScoreTransfer": 1,
+  "CommanderScore": {
+    "Enabled": true,
+    "Rules": [
+      {
+        "Event": "UnitProduced",
+        "Enabled": true,
+        "ValueSource": "Cost",
+        "Divisor": 100,
+        "Minimum": 1,
+        "Multiplier": 1,
+        "FixedPoints": 0,
+        "Objects": [],
+        "Overrides": {}
+      },
+      {
+        "Event": "UnitLost",
+        "Enabled": true,
+        "ValueSource": "Cost",
+        "Divisor": 100,
+        "Minimum": 1,
+        "Multiplier": -1,
+        "FixedPoints": 0,
+        "Objects": [],
+        "Overrides": {}
+      },
+      {
+        "Event": "BuildingCompleted",
+        "Enabled": true,
+        "ValueSource": "Cost",
+        "Divisor": 50,
+        "Minimum": 1,
+        "Multiplier": 1,
+        "FixedPoints": 0,
+        "Objects": [],
+        "Overrides": {}
+      },
+      {
+        "Event": "BuildingLost",
+        "Enabled": true,
+        "ValueSource": "Cost",
+        "Divisor": 50,
+        "Minimum": 1,
+        "Multiplier": -1,
+        "FixedPoints": 0,
+        "Objects": [],
+        "Overrides": {}
+      },
+      {
+        "Event": "TechnologyReached",
+        "Enabled": true,
+        "ValueSource": "Fixed",
+        "Divisor": 100,
+        "Minimum": 1,
+        "Multiplier": 1,
+        "FixedPoints": 500,
+        "Objects": [],
+        "Overrides": {}
+      },
+      {
+        "Event": "EnemyUnitDestroyed",
+        "Enabled": true,
+        "ValueSource": "Cost",
+        "Divisor": 100,
+        "Minimum": 1,
+        "Multiplier": 1,
+        "FixedPoints": 0,
+        "Objects": [],
+        "Overrides": {}
+      },
+      {
+        "Event": "EnemyBuildingDestroyed",
+        "Enabled": true,
+        "ValueSource": "Cost",
+        "Divisor": 50,
+        "Minimum": 1,
+        "Multiplier": 1,
+        "FixedPoints": 0,
+        "Objects": [],
+        "Overrides": {}
+      },
+      {
+        "Event": "BalteriumDeposited",
+        "Enabled": true,
+        "ValueSource": "Amount",
+        "Divisor": 1000,
+        "Minimum": 0,
+        "Multiplier": 1,
+        "FixedPoints": 0,
+        "Objects": [],
+        "Overrides": {}
+      }
+    ]
+  },
   "TransportUnits": [
     "Shuttle",
     "Dropship",

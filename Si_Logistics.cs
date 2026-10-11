@@ -9,7 +9,7 @@ using Newtonsoft.Json;
 using SilicaAdminMod;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(Si_Logistics.LogisticsMod), "Harvester Logistics Prototype", "0.8.1", "Silica community prototype")]
+[assembly: MelonInfo(typeof(Si_Logistics.LogisticsMod), "Harvester Logistics Prototype", "0.9.0", "Silica community prototype")]
 [assembly: MelonGame("Bohemia Interactive", "Silica")]
 [assembly: MelonOptionalDependencies("Admin Mod")]
 
@@ -27,6 +27,7 @@ namespace Si_Logistics
         public bool LogisticsScore = true;
         public int ScoreUnload = 2;
         public int ScoreTransfer = 1;
+        public CommanderScoreConfig CommanderScore = new CommanderScoreConfig();
         [JsonProperty("AItransport")]
         public AITransportConfig AITransport = new AITransportConfig();
         public List<string> TransportUnits = new List<string> { "Shuttle", "Dropship", "Squad Transport", "Platoon Hauler" };
@@ -162,6 +163,7 @@ namespace Si_Logistics
             Cfg.ScoreUnload = Math.Max(0, Math.Min(100, Cfg.ScoreUnload));
             Cfg.ScoreTransfer = Math.Max(0, Math.Min(100, Cfg.ScoreTransfer));
             if (!Cfg.LogisticsScore) ScoreRewards.Clear();
+            ValidateCommanderScoreConfig();
             Cfg.PersonalBonus.Share = ValidRewardShare(Cfg.PersonalBonus.Share, 0.10f);
             Cfg.PersonalBonus.TransferShare = ValidRewardShare(Cfg.PersonalBonus.TransferShare, 0.08f);
             if (float.IsNaN(Cfg.DeliveryCooldownSeconds) || float.IsInfinity(Cfg.DeliveryCooldownSeconds) || Cfg.DeliveryCooldownSeconds < 0)
@@ -208,12 +210,15 @@ namespace Si_Logistics
             BindRewardEvents();
             InstallHarvesterFix();
             InstallAITransport();
+            InstallCommanderScore();
             // Fixed public surface: both names always expose exactly the same commands.
             HelperMethods.RegisterPlayerCommand("logistics", OnLogisticsCommand, Cfg.Commands.HideFromChat);
             HelperMethods.RegisterPlayerCommand("logi", OnLogisticsCommand, Cfg.Commands.HideFromChat);
             HelperMethods.RegisterPlayerCommand("logisticsscore", OnScoreCommand, Cfg.Commands.HideFromChat);
             HelperMethods.RegisterPlayerCommand("scoreunload", OnScoreCommand, Cfg.Commands.HideFromChat);
             HelperMethods.RegisterPlayerCommand("scoretransfer", OnScoreCommand, Cfg.Commands.HideFromChat);
+            HelperMethods.RegisterPlayerCommand("logisticsscorecomander", OnCommanderScoreCommand, Cfg.Commands.HideFromChat);
+            HelperMethods.RegisterPlayerCommand("logisticsscorecommander", OnCommanderScoreCommand, Cfg.Commands.HideFromChat);
         }
 
         private static void ReleaseLogisticsControl()
@@ -321,6 +326,9 @@ namespace Si_Logistics
             Reply(caller, "Logistics score " + (Cfg.LogisticsScore ? "ON" : "OFF") +
                 " | unload " + Cfg.ScoreUnload + " | transfer " + Cfg.ScoreTransfer + " points per 100 Balterium" +
                 (Cfg.Enabled ? "." : " (master Logistics is OFF)."));
+            Reply(caller, "Commander score " + (Cfg.CommanderScore.Enabled ? "ON" : "OFF") +
+                " | active " + (CommanderScoringActive ? "YES" : "NO") +
+                " | KoH purchase exclusion " + (CommanderPurchaseHookReady ? "ready" : "unavailable; scoring blocked") + ".");
             Unit unit = caller != null ? caller.ControlledUnit : null;
             if (unit == null || !IsTransport(unit)) return;
             int amount = CargoByTransport.TryGetValue(unit.GetInstanceID(), out Cargo cargo) ? cargo.Amount : 0;
@@ -334,6 +342,7 @@ namespace Si_Logistics
             Reply(caller, "Admin: rate load|unload <positive integer> (ground); radius load|unload <metres> (player transfers).");
             Reply(caller, "Admin: cooldown <seconds>; debug on|off; reload; harvesterfix on|off; aitransport on|off.");
             Reply(caller, "Admin: /logisticsscore on|off; /scoreunload <0..100>; /scoretransfer <0..100> (points per 100 Balterium).");
+            Reply(caller, "Admin: /logisticsscorecomander on|off; edit CommanderScore.Rules in config, then /logistics reload.");
         }
 
         private static bool TryParseFloat(string text, out float value) =>
@@ -552,6 +561,7 @@ namespace Si_Logistics
                 {
                     QueueReward(driver, deposited, rewardRate, rewardEpoch);
                     AwardScore(driver, deposited, Cfg.ScoreUnload, false, rewardEpoch);
+                    CommanderDeposit(transport.Team, deposited, rewardEpoch);
                     if (Cfg.Debug) DebugMsg("Logistics UNLOAD " + deposited + "; cargo=" + cargo.Amount);
                     Progress(transport, cargo);
                     if (cargo.Amount == 0)

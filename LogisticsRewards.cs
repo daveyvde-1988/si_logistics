@@ -83,30 +83,33 @@ namespace Si_Logistics
         private static void BindRewardEvents()
         {
             BindHarvesterEvents();
+            BindCommanderScoreEvents();
             GameEvents.OnGameStarted -= LogisticsMatchStarted; GameEvents.OnGameStarted += LogisticsMatchStarted;
             GameEvents.OnGameEnded -= LogisticsMatchEnded; GameEvents.OnGameEnded += LogisticsMatchEnded;
             GameEvents.OnPlayerLeft -= LogisticsPlayerLeft; GameEvents.OnPlayerLeft += LogisticsPlayerLeft;
         }
         private static void LogisticsPlayerLeft(Player player)
         {
+            CommanderPlayerLeft(player);
             foreach (var pair in new List<KeyValuePair<long, ScoreAccount>>(ScoreRewards))
                 if (ReferenceEquals(pair.Value.Player, player)) ScoreRewards.Remove(pair.Key);
             foreach (var pair in new List<KeyValuePair<long, RewardAccount>>(Rewards))
                 if (ReferenceEquals(pair.Value.Player, player)) Rewards.Remove(pair.Key);
         }
         private static void LogisticsMatchStarted(GameMode mode)
-        { ResetAITransports(false); ResetHarvesterFix(false); RewardEpoch++; Rewards.Clear(); ScoreRewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear(); MatchAcceptsRewards = true; }
+        { ResetAITransports(false); ResetHarvesterFix(false); ResetCommanderScore(); RewardEpoch++; Rewards.Clear(); ScoreRewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear(); MatchAcceptsRewards = true; }
         private static void LogisticsMatchEnded(GameMode mode, Team winner)
-        { ResetAITransports(false); ResetHarvesterFix(false); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); ScoreRewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear(); }
+        { ResetAITransports(false); ResetHarvesterFix(false); ResetCommanderScore(); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); ScoreRewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear(); }
         public override void OnSceneWasInitialized(int buildIndex, string sceneName) => BindRewardEvents();
         public override void OnSceneWasUnloaded(int buildIndex, string sceneName)
-        { ResetAITransports(false); ResetHarvesterFix(false); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); ScoreRewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear(); }
+        { ResetAITransports(false); ResetHarvesterFix(false); ResetCommanderScore(); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); ScoreRewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear(); }
         public override void OnDeinitializeMelon()
         {
+            UnbindCommanderScoreEvents();
             ResetAITransports(true);
             ResetHarvesterFix(true);
             GameEvents.OnUnitSpawned -= HarvesterSpawned;
-            RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); ScoreRewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear();
+            ResetCommanderScore(); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); ScoreRewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear();
             GameEvents.OnGameStarted -= LogisticsMatchStarted;
             GameEvents.OnGameEnded -= LogisticsMatchEnded;
             GameEvents.OnPlayerLeft -= LogisticsPlayerLeft;
@@ -169,6 +172,7 @@ namespace Si_Logistics
                     int delivered = (int)Math.Min(int.MaxValue, Math.Min(__state.Retrieved, __state.Accepted));
                     QueueReward(__state.Driver, delivered, __state.Rate, __state.Epoch);
                     AwardScore(__state.Driver, delivered, __state.ScoreRate, false, __state.Epoch);
+                    CommanderDeposit(__state.Team, delivered, __state.Epoch);
                 }
             }
             catch (Exception error) { DebugWarning("Logistics harvester reward: " + error.Message); }

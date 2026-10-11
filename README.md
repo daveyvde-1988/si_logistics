@@ -55,6 +55,66 @@ match start/end and scene unload. The master Logistics switch also gates scoring
 `/logistics status` shows the score controller and both rates. All mod-owned logging
 uses `/logistics debug on|off`, with `Debug` defaulting to `false`.
 
+### Commander score
+
+`CommanderScore.Enabled` defaults to `true`. Admin-only
+`/logisticsscorecomander on|off` (also `/logisticsscorecommander`) controls it.
+`/logistics status` reports enabled/active state and KoH purchase-hook readiness.
+It follows the master Logistics switch, independently of the player delivery score
+switch. Awards and penalties update the current commander's normal round score
+silently; diagnostic output follows Logistics `Debug` only.
+
+Configure `CommanderScore.Rules` in
+`UserData/Logistics_cfg/Si_Logistics_Config.json`, then `/logistics reload`.
+The default rules use **resource cost** as object value, round down after division,
+and apply a minimum of 1 point:
+
+| Event | Default |
+|---|---|
+| `UnitProduced` | Cost / 100 |
+| `UnitLost` | Negative Cost / 100 |
+| `BuildingCompleted` | Cost / 50 |
+| `BuildingLost` | Negative Cost / 50 |
+| `TechnologyReached` | 500 per newly reached tier |
+| `EnemyUnitDestroyed` | Enemy unit Cost / 100 |
+| `EnemyBuildingDestroyed` | Enemy structure Cost / 50 |
+| `BalteriumDeposited` | 1 per 1,000 actually accepted at a refinery |
+
+Add/remove rules or set each rule's `Enabled`, `Divisor`, `Minimum` and signed
+`Multiplier`. `ValueSource` accepts `Cost`, the object's native `Score`, `Fixed`
+(uses `FixedPoints` times `Multiplier`), or `Amount` (for refinery deposits).
+`Objects` is an optional list of ObjectInfo names or display names; empty matches
+all. `Overrides` maps those names to exact final signed points, bypassing the
+formula. For example, `"Overrides": { "Harvester": -50 }` on `UnitLost` assigns
+a 50-point loss penalty to that named unit. Names must match the actual game data,
+case-insensitively. Multiple matching rules add together. Unknown event names or
+value sources award nothing. Removing the whole list disables all rule awards.
+`Minimum` and rounding apply to object-value rules; `Amount` retains fractional
+points and `Fixed` uses its configured signed value directly.
+
+Only successful native production/construction earns build score; starting units,
+respawns, failed/cancelled sites and arbitrary mod spawns do not. Losses are charged
+to the commander at destruction, including starting units, but excluding units
+directly controlled by a player or driven by a player at that moment. KoH `/buy`
+units and structures are marked at spawn and excluded from production/loss/combat
+score for the round, even after their buyer leaves. Logistics observes KoH purchase
+execution with Harmony; its source, DLL and config are unchanged. Commander scoring
+is blocked if these hooks cannot be installed, rather than charging purchased units.
+
+Enemy destruction awards require an AI-controlled attacking unit or an automated
+structure turret. Player-controlled or KoH-bought attackers earn no commander kill
+score; allied/neutral targets earn none. Player-controlled enemy targets can still
+earn the attacking commander's reward. Duplicate construction/destruction callbacks
+are ignored. Only an ongoing server match scores; round cleanup earns nothing.
+
+Technology milestones are tracked per team, including while scoring is disabled;
+starting tiers and re-reaching a lost tier earn nothing. A multi-tier jump earns
+500 for each new tier by default. Deposit fractions are retained per rule, commander
+and team; reload, disabling commander score, disconnect and round reset clear them.
+Deposits include autonomous harvesters/transports and player deliveries through the
+existing verified refinery deposit paths. Team-credit grants and harvester-to-
+transport pickups do not count as refinery deposits. No commander means no score.
+
 /logistics off hands harvesters back to vanilla, stops managed transport duty,
 ends transfer sessions and pauses reward accrual/payouts. Surviving cargo and
 already-earned pending rewards remain; feature sub-switch settings are retained.

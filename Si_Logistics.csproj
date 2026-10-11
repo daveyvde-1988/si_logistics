@@ -4,7 +4,7 @@
     <Nullable>disable</Nullable>
     <LangVersion>latest</LangVersion>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
-    <Version>0.8.1</Version>
+    <Version>0.9.0</Version>
     <ServerRoot Condition="'$(ServerRoot)' == ''">$(MSBuildThisFileDirectory)..\..</ServerRoot>
   </PropertyGroup>
   <ItemGroup>
@@ -12,6 +12,7 @@
     <Compile Include="LogisticsPerformance.cs" />
     <Compile Include="LogisticsRewards.cs" />
     <Compile Include="LogisticsScore.cs" />
+    <Compile Include="CommanderScore.cs" />
     <Compile Include="HarvesterFix.cs" />
     <Compile Include="AITransport.cs" />
     <Compile Include="AITransportAllocation.cs" />
@@ -21,6 +22,7 @@
     <Reference Include="Si_AdminMod"><HintPath>Si_AdminMod.dll</HintPath><Private>False</Private></Reference>
     <Reference Include="UnityEngine.CoreModule"><HintPath>UnityEngine.CoreModule.dll</HintPath><Private>False</Private></Reference>
     <Reference Include="UnityEngine.TerrainModule"><HintPath>$(ServerRoot)\Silica_Data\Managed\UnityEngine.TerrainModule.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="UnityEngine.PhysicsModule"><HintPath>$(ServerRoot)\Silica_Data\Managed\UnityEngine.PhysicsModule.dll</HintPath><Private>False</Private></Reference>
     <Reference Include="Newtonsoft.Json"><HintPath>Newtonsoft.Json.dll</HintPath><Private>False</Private></Reference>
   </ItemGroup>
 </Project>
