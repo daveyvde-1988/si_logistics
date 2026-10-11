@@ -11,6 +11,7 @@
     <Compile Include="Si_Logistics.cs" />
     <Compile Include="LogisticsPerformance.cs" />
     <Compile Include="LogisticsRewards.cs" />
+    <Compile Include="LogisticsScore.cs" />
     <Compile Include="HarvesterFix.cs" />
     <Compile Include="AITransport.cs" />
     <Compile Include="AITransportAllocation.cs" />

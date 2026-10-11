@@ -96,7 +96,7 @@ namespace Si_Logistics
             if (!AITransportActive || !AITransportEligible(u)) return;
             var h = target.Object ? target.Object.OwnerUnit : null;
             if (Cfg.Debug || hadJob || AIHarvesterTarget(h, u.Team))
-                MelonLogger.Msg("[AITransport] order transport=" + u.GetInstanceID() + " definition=" + definition.name +
+                DebugMsg("[AITransport] order transport=" + u.GetInstanceID() + " definition=" + definition.name +
                     " target=" + HarvestObjectId(h) + " queued=" + issueParams.QueueOrder);
             // A queued order must not jump ahead of the player's earlier commands.
             if (issueParams.QueueOrder || definition != OrderDefinitionRegistry.Defend || !AIHarvesterTarget(h, u.Team)) return;
@@ -112,14 +112,14 @@ namespace Si_Logistics
                 " | right-click a friendly harvester to enrol in automatic logistics duty; a new order cancels. Details in server log.");
             if (!Cfg.Enabled && Cfg.AITransport.Enabled) Reply(caller, "AI transport paused by Logistics master switch.");
             if (!Cfg.Debug) return;
-            MelonLogger.Msg("[AITransport] status enabled=" + Cfg.AITransport.Enabled + " active=" + AITransportActive + " duty=" + AITransportJobs.Count +
+            DebugMsg("[AITransport] status enabled=" + Cfg.AITransport.Enabled + " active=" + AITransportActive + " duty=" + AITransportJobs.Count +
                 " bands=" + Cfg.AITransport.NearHarvesterDistanceMetres + "/" + Cfg.AITransport.MediumHarvesterDistanceMetres +
                 " groundLimits=" + Cfg.AITransport.NearGroundTransports + "/" + Cfg.AITransport.MediumGroundTransports + "/" + Cfg.AITransport.FarGroundTransports +
                 " airLimits=" + Cfg.AITransport.NearAirTransports + "/" + Cfg.AITransport.MediumAirTransports + "/" + Cfg.AITransport.FarAirTransports);
             foreach (var j in AITransportJobs.Values)
             {
                 int amount = j.Transport && CargoByTransport.TryGetValue(j.Transport.GetInstanceID(), out var cargo) ? cargo.Amount : 0;
-                MelonLogger.Msg("[AITransport] transport=" + HarvestObjectId(j.Transport) + " harvester=" + HarvestObjectId(j.Harvester) +
+                DebugMsg("[AITransport] transport=" + HarvestObjectId(j.Transport) + " harvester=" + HarvestObjectId(j.Harvester) +
                     " patch=" + HarvestObjectId(j.AssignedArea) + " refinery=" + HarvestObjectId(j.Refinery) + " delivering=" + j.Delivering + " cargo=" + amount +
                     " loadRadius=" + AILoadRadius(j.Transport) + " unloadRadius=" + AIUnloadRadius(j.Transport) +
                     " holding=" + j.Holding + " position=" + (j.Transport ? j.Transport.transform.position.ToString() : "destroyed") +
@@ -131,7 +131,7 @@ namespace Si_Logistics
         {
             if (j.Status == status) return;
             j.Status = status;
-            MelonLogger.Msg("[AITransport] transport=" + HarvestObjectId(j.Transport) + " harvester=" + HarvestObjectId(j.Harvester) + " " + status);
+            DebugMsg("[AITransport] transport=" + HarvestObjectId(j.Transport) + " harvester=" + HarvestObjectId(j.Harvester) + " " + status);
         }
 
         private static bool AIOrder(AITransportJob j, OrderDefinition definition, Vector3 position)
@@ -337,7 +337,7 @@ namespace Si_Logistics
                     foreach (var deposit in refinery.ResourceDepositPoints)
                         if (deposit) points += " deposit=" + deposit.transform.position + " approach=" +
                             deposit.GetClosestApproachPoint(u.transform.position);
-                    MelonLogger.Msg("[AITransport] refinery approach rejected transport=" + u.GetInstanceID() +
+                    DebugMsg("[AITransport] refinery approach rejected transport=" + u.GetInstanceID() +
                         " refinery=" + refinery.GetInstanceID() + " center=" + center + " unloadRadius=" + radius + points);
                 }
             }

@@ -127,17 +127,17 @@ namespace Si_Logistics
         {
             if (j.LastDiagnostic == reason) return;
             j.LastDiagnostic = reason;
-            MelonLogger.Msg("[HarvesterFix] unit=" + HarvestObjectId(j.Agent.Unit) + " " + reason);
+            DebugMsg("[HarvesterFix] unit=" + HarvestObjectId(j.Agent.Unit) + " " + reason);
         }
 
         private static void DumpHarvesterStatus()
         {
-            MelonLogger.Msg("[HarvesterFix] status enabled=" + Cfg.HarvesterFix.Enabled + " active=" + HarvestFixActive);
+            DebugMsg("[HarvesterFix] status enabled=" + Cfg.HarvesterFix.Enabled + " active=" + HarvestFixActive);
             foreach (var j in HarvestJobs.Values)
             {
                 var a = j.Agent;
                 if (!a || !a.Unit || !a.ResourceHolder) continue;
-                MelonLogger.Msg("[HarvesterFix] unit=" + HarvestObjectId(a.Unit) + " phase=" + j.Phase +
+                DebugMsg("[HarvesterFix] unit=" + HarvestObjectId(a.Unit) + " phase=" + j.Phase +
                     " dock=" + a.DockState + " cargo=" + a.ResourceHolder.AmountStored + "/" + a.ResourceHolder.MaxAmount +
                     " teamRoom=" + (a.Team ? a.Team.RemainingResourceCapacity : 0) + " refinery=" +
                     (j.Line == null ? 0 : HarvestObjectId(j.Line.Refinery)) + " slot=" + (j.LastSlot + 1) +
@@ -151,7 +151,7 @@ namespace Si_Logistics
             foreach (var s in Structure.Structures)
                 if (s && s.ResourceDepositPoints != null)
                     foreach (var p in s.ResourceDepositPoints)
-                        if (p) MelonLogger.Msg("[HarvesterFix] refinery=" + HarvestObjectId(s) + " point=" + HarvestObjectId(p) +
+                        if (p) DebugMsg("[HarvesterFix] refinery=" + HarvestObjectId(s) + " point=" + HarvestObjectId(p) +
                             " reserved=" + HarvestObjectId(p.ReservedByUnit) + " occupied=" + HarvestObjectId(p.OccupiedByUnit));
         }
 
@@ -243,7 +243,7 @@ namespace Si_Logistics
                     else if (j.Area && j.Area.ResourceAmountCurrent > 0)
                         a.Unit.OrderAgent.IssueOrder(OrderDefinitionRegistry.Harvest, new OrderTarget(j.Area.transform.position, null, j.Area), OrderIssueParams.SelfDirected(AgentMoveSpeed.Fast));
                 }
-                catch (Exception e) { MelonLogger.Warning("Harvester fix release: " + e.Message); }
+                catch (Exception e) { DebugWarning("Harvester fix release: " + e.Message); }
                 finally { HarvestOwnOrder = false; }
             }
         }
@@ -694,7 +694,7 @@ namespace Si_Logistics
             catch (Exception e)
             {
                 ReleaseHarvestReservations(j); j.Phase = HarvestPhase.Manual;
-                MelonLogger.Error("Harvester fix released vehicle to vanilla after error: " + e);
+                DebugError("Harvester fix released vehicle to vanilla after error: " + e);
                 return true;
             }
         }

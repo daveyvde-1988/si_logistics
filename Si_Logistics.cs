@@ -22,8 +22,11 @@ namespace Si_Logistics
     {
         public bool Enabled = true;
         // true = 0.3.x diagnostics: vehicle names, a 5 s nearest-harvester/refinery probe and one
-        // LOAD/UNLOAD line per second. Off: one log line per finished load or delivery.
+        // LOAD/UNLOAD line per second. Off: no mod-owned server log output.
         public bool Debug = false;
+        public bool LogisticsScore = true;
+        public int ScoreUnload = 2;
+        public int ScoreTransfer = 1;
         [JsonProperty("AItransport")]
         public AITransportConfig AITransport = new AITransportConfig();
         public List<string> TransportUnits = new List<string> { "Shuttle", "Dropship", "Squad Transport", "Platoon Hauler" };
@@ -94,10 +97,15 @@ namespace Si_Logistics
             Path.Combine(MelonEnvironment.UserDataDirectory, "Logistics_cfg", "Si_Logistics_Config.json");
         private float _elapsed;
 
+        // All mod-owned server log output follows the runtime Debug setting.
+        private static void DebugMsg(string text) { if (Cfg.Debug) MelonLogger.Msg(text); }
+        private static void DebugWarning(string text) { if (Cfg.Debug) MelonLogger.Warning(text); }
+        private static void DebugError(string text) { if (Cfg.Debug) MelonLogger.Error(text); }
+
         public override void OnInitializeMelon()
         {
             LoadConfig();
-            MelonLogger.Msg("Harvester Logistics config " + ConfigPath + ": enabled=" + Cfg.Enabled +
+            DebugMsg("Harvester Logistics config " + ConfigPath + ": enabled=" + Cfg.Enabled +
                 ", vehicles=" + string.Join(", ", Cfg.TransportUnits) +
                 ", capacity air/ground=" + Cfg.AirCargoCapacity + "/" + Cfg.GroundCargoCapacity +
                 ", load/unload per s=" + Cfg.LoadUnitsPerSecond + "/" + Cfg.UnloadUnitsPerSecond +
@@ -138,12 +146,12 @@ namespace Si_Logistics
                 {
                     Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath));
                     File.WriteAllText(ConfigPath, JsonConvert.SerializeObject(Cfg, Formatting.Indented));
-                    MelonLogger.Msg("Logistics: wrote default config " + ConfigPath);
+                    DebugMsg("Logistics: wrote default config " + ConfigPath);
                 }
             }
             catch (Exception exception)
             {
-                MelonLogger.Error("Logistics: config " + ConfigPath + " unreadable, using defaults: " + exception.Message);
+                DebugError("Logistics: config " + ConfigPath + " unreadable, using defaults: " + exception.Message);
                 Cfg = new LogisticsConfig();
             }
             if (Cfg.TransportUnits == null) Cfg.TransportUnits = new List<string>();
@@ -151,6 +159,9 @@ namespace Si_Logistics
             if (Cfg.PersonalBonus == null) Cfg.PersonalBonus = new LogisticsConfig.BonusConfig();
             if (Cfg.Chat == null) Cfg.Chat = new LogisticsConfig.ChatConfig();
             if (Cfg.Commands == null) Cfg.Commands = new LogisticsConfig.CommandConfig();
+            Cfg.ScoreUnload = Math.Max(0, Math.Min(100, Cfg.ScoreUnload));
+            Cfg.ScoreTransfer = Math.Max(0, Math.Min(100, Cfg.ScoreTransfer));
+            if (!Cfg.LogisticsScore) ScoreRewards.Clear();
             Cfg.PersonalBonus.Share = ValidRewardShare(Cfg.PersonalBonus.Share, 0.10f);
             Cfg.PersonalBonus.TransferShare = ValidRewardShare(Cfg.PersonalBonus.TransferShare, 0.08f);
             if (float.IsNaN(Cfg.DeliveryCooldownSeconds) || float.IsInfinity(Cfg.DeliveryCooldownSeconds) || Cfg.DeliveryCooldownSeconds < 0)
@@ -188,7 +199,7 @@ namespace Si_Logistics
                 Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath));
                 File.WriteAllText(ConfigPath, JsonConvert.SerializeObject(Cfg, Formatting.Indented));
             }
-            catch (Exception exception) { MelonLogger.Warning("Logistics: could not save config: " + exception.Message); }
+            catch (Exception exception) { DebugWarning("Logistics: could not save config: " + exception.Message); }
         }
 
         public override void OnLateInitializeMelon()
@@ -200,6 +211,9 @@ namespace Si_Logistics
             // Fixed public surface: both names always expose exactly the same commands.
             HelperMethods.RegisterPlayerCommand("logistics", OnLogisticsCommand, Cfg.Commands.HideFromChat);
             HelperMethods.RegisterPlayerCommand("logi", OnLogisticsCommand, Cfg.Commands.HideFromChat);
+            HelperMethods.RegisterPlayerCommand("logisticsscore", OnScoreCommand, Cfg.Commands.HideFromChat);
+            HelperMethods.RegisterPlayerCommand("scoreunload", OnScoreCommand, Cfg.Commands.HideFromChat);
+            HelperMethods.RegisterPlayerCommand("scoretransfer", OnScoreCommand, Cfg.Commands.HideFromChat);
         }
 
         private static void ReleaseLogisticsControl()
@@ -290,7 +304,7 @@ namespace Si_Logistics
                     default: ShowHelp(caller); break;
                 }
             }
-            catch (Exception exception) { MelonLogger.Warning("Logistics command: " + exception); }
+            catch (Exception exception) { DebugWarning("Logistics command: " + exception); }
         }
 
         private static void ShowStatus(Player caller)
@@ -304,6 +318,9 @@ namespace Si_Logistics
                 " | rewards " + RewardSettings() + (KohCredits.Available ? " (KoH linked)" : " (KoH not found)"));
             ShowHarvesterStatus(caller);
             ShowAITransportStatus(caller);
+            Reply(caller, "Logistics score " + (Cfg.LogisticsScore ? "ON" : "OFF") +
+                " | unload " + Cfg.ScoreUnload + " | transfer " + Cfg.ScoreTransfer + " points per 100 Balterium" +
+                (Cfg.Enabled ? "." : " (master Logistics is OFF)."));
             Unit unit = caller != null ? caller.ControlledUnit : null;
             if (unit == null || !IsTransport(unit)) return;
             int amount = CargoByTransport.TryGetValue(unit.GetInstanceID(), out Cargo cargo) ? cargo.Amount : 0;
@@ -316,6 +333,7 @@ namespace Si_Logistics
             Reply(caller, "Admin: on|off; share <0..1>; transfershare <0..1>; capacity air|ground <positive integer>.");
             Reply(caller, "Admin: rate load|unload <positive integer> (ground); radius load|unload <metres> (player transfers).");
             Reply(caller, "Admin: cooldown <seconds>; debug on|off; reload; harvesterfix on|off; aitransport on|off.");
+            Reply(caller, "Admin: /logisticsscore on|off; /scoreunload <0..100>; /scoretransfer <0..100> (points per 100 Balterium).");
         }
 
         private static bool TryParseFloat(string text, out float value) =>
@@ -325,7 +343,7 @@ namespace Si_Logistics
         private static void Reply(Player caller, string text)
         {
             if (caller != null) HelperMethods.SendChatMessageToPlayer(caller, HelperMethods.chatPrefix, " " + text);
-            else MelonLogger.Msg(text);
+            else DebugMsg(text);
         }
 
         public override void OnUpdate()
@@ -334,14 +352,14 @@ namespace Si_Logistics
             UpdateHarvesterFix();
             // Earned rewards are retained while the master switch pauses payouts.
             try { PayDueRewards(); }
-            catch (Exception exception) { MelonLogger.Warning("Logistics payout: " + exception.Message); }
+            catch (Exception exception) { DebugWarning("Logistics payout: " + exception.Message); }
             if (!AITransportActive && AITransportJobs.Count > 0) ResetAITransports(true);
             if (!Cfg.Enabled || !MatchAcceptsRewards) return;
             _elapsed += Time.deltaTime;
             if (_elapsed < 1f) return;
             _elapsed = 0f;
             try { Tick(); }
-            catch (Exception exception) { MelonLogger.Error("Logistics tick: " + exception); }
+            catch (Exception exception) { DebugError("Logistics tick: " + exception); }
         }
 
         private static bool IsTransport(Unit unit)
@@ -363,7 +381,7 @@ namespace Si_Logistics
                 if (Cfg.Debug && transport != null && transport.ControlledBy != null && transport.DriverCompartment != null && transport.ObjectInfo != null)
                 {
                     string candidate = transport.ObjectInfo.DisplayName.ToString();
-                    if (LoggedDriverVehicles.Add(candidate)) MelonLogger.Msg("Logistics diagnostic vehicle name: " + candidate);
+                    if (LoggedDriverVehicles.Add(candidate)) DebugMsg("Logistics diagnostic vehicle name: " + candidate);
                 }
                 if (!IsTransport(transport)) continue;
                 int vehicleId = transport.GetInstanceID();
@@ -395,7 +413,7 @@ namespace Si_Logistics
                 catch (Exception error)
                 {
                     TransportErrorUntil[vehicleId] = Time.unscaledTime + 10f;
-                    MelonLogger.Error("Logistics transport=" + vehicleId + " update failed; retry in 10s: " + error);
+                    DebugError("Logistics transport=" + vehicleId + " update failed; retry in 10s: " + error);
                 }
             }
             // Cargo on a destroyed vehicle is lost, like a destroyed harvester's cargo.
@@ -444,7 +462,7 @@ namespace Si_Logistics
             string refineryInfo = nearestRefinery == null ? "none" :
                 nearestRefinery.ObjectInfo.DisplayName + " distance=" + refineryDistance.ToString("F1") +
                 " depositPoints=" + (nearestRefinery.ResourceDepositPoints == null ? 0 : nearestRefinery.ResourceDepositPoints.Count);
-            MelonLogger.Msg("Logistics probe " + transport.ObjectInfo.DisplayName +
+            DebugMsg("Logistics probe " + transport.ObjectInfo.DisplayName +
                 " cargo=" + cargo.Amount + " friendlyHarvesters=" + friendlyHarvesterCount +
                 " nearestHolder=[" + holderInfo + "] nearestRefinery=[" + refineryInfo + "]");
         }
@@ -491,10 +509,15 @@ namespace Si_Logistics
                 if (removed > 0)
                 {
                     HarvesterTransportPickup(harvester);
-                    if (transportDriver != null) QueueReward(harvesterDriver, removed, rewardRate, rewardEpoch);
+                    if (transportDriver != null)
+                    {
+                        QueueReward(harvesterDriver, removed, rewardRate, rewardEpoch);
+                        if (Connected(transportDriver, SteamId(transportDriver)))
+                            AwardScore(harvesterDriver, removed, Cfg.ScoreTransfer, true, rewardEpoch);
+                    }
                     SetTransfer(transport, cargo, "Loading", 0, CapacityFor(transport));
                     Progress(transport, cargo);
-                    if (Cfg.Debug) MelonLogger.Msg("Logistics LOAD " + removed + " from " + harvester.ObjectInfo.DisplayName + "; cargo=" + cargo.Amount);
+                    if (Cfg.Debug) DebugMsg("Logistics LOAD " + removed + " from " + harvester.ObjectInfo.DisplayName + "; cargo=" + cargo.Amount);
                     bool loaded = cargo.Amount >= CapacityFor(transport);
                     PlaySound(transport, loaded ? Cfg.Sounds.OnFull : Cfg.Sounds.OnLoad);
                     if (loaded) SetTransfer(transport, cargo, null);
@@ -528,7 +551,8 @@ namespace Si_Logistics
                 if (deposited > 0)
                 {
                     QueueReward(driver, deposited, rewardRate, rewardEpoch);
-                    if (Cfg.Debug) MelonLogger.Msg("Logistics UNLOAD " + deposited + "; cargo=" + cargo.Amount);
+                    AwardScore(driver, deposited, Cfg.ScoreUnload, false, rewardEpoch);
+                    if (Cfg.Debug) DebugMsg("Logistics UNLOAD " + deposited + "; cargo=" + cargo.Amount);
                     Progress(transport, cargo);
                     if (cargo.Amount == 0)
                     {
@@ -568,7 +592,7 @@ namespace Si_Logistics
                 }
                 if (_grant == null && !_missingLogged)
                 {
-                    MelonLogger.Msg("Logistics: Si_KingOfTheHill credit API not found; personal bonus inactive.");
+                    DebugMsg("Logistics: Si_KingOfTheHill credit API not found; personal bonus inactive.");
                     _missingLogged = true;
                 }
                 return _grant != null;
@@ -579,7 +603,7 @@ namespace Si_Logistics
             {
                 if (!Resolve()) return GrantResult.Unavailable;
                 try { return (bool)_grant.Invoke(null, new object[] { steamId, amount, reason }) ? GrantResult.Granted : GrantResult.Unavailable; }
-                catch (Exception exception) { MelonLogger.Warning("Logistics: KoH credit result uncertain; attempted batch will NOT be retried to avoid duplicate credits: " + exception.Message); return GrantResult.Uncertain; }
+                catch (Exception exception) { DebugWarning("Logistics: KoH credit result uncertain; attempted batch will NOT be retried to avoid duplicate credits: " + exception.Message); return GrantResult.Uncertain; }
             }
 
             public static int TryGetBalance(long steamId)
@@ -605,7 +629,7 @@ namespace Si_Logistics
             string previous = cargo.Transfer;
             Player driver = transport.ControlledBy;
             if (previous != null)
-                MelonLogger.Msg("Logistics: " + (driver != null ? driver.PlayerName : "no driver") + " " +
+                DebugMsg("Logistics: " + (driver != null ? driver.PlayerName : "no driver") + " " +
                     transport.ObjectInfo.DisplayName + " " + previous.ToLowerInvariant() + " ended at " + TransferPercent(cargo) +
                     "%, cargo " + cargo.Amount + "/" + CapacityFor(transport) +
                     (previous == "Unloading" ? ", delivered " + (cargo.TransferFrom - cargo.Amount) : ""));

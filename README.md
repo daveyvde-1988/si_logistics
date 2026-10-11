@@ -36,6 +36,25 @@ per-vehicle diagnostic dumps without adding separate status commands.
 
 ## Master switch and rewards
 
+### Player score rewards
+
+`LogisticsScore` defaults to `true`. Admin commands `/logisticsscore on|off`,
+`/scoreunload <0..100>` and `/scoretransfer <0..100>` save their settings to the
+Logistics config. `ScoreUnload` defaults to 2 points per 100 Balterium actually
+accepted at a refinery from a player-driven transport or harvester.
+`ScoreTransfer` defaults to 1 point per 100 Balterium transferred from a
+player-driven harvester to a player-driven transport; only the harvester driver
+receives transfer score. Autonomous vehicles without player drivers earn no score.
+
+Score is added directly to the normal round score through `Player.Score`, without
+chat award messages or a KoH dependency. Existing credit rewards remain separate.
+Fractional points carry forward per player and separately for unloads/transfers;
+rate changes apply to newly handled cargo. Disabling Logistics score clears these
+fractions, but does not remove awarded score. Fractions also clear on disconnect,
+match start/end and scene unload. The master Logistics switch also gates scoring.
+`/logistics status` shows the score controller and both rates. All mod-owned logging
+uses `/logistics debug on|off`, with `Debug` defaulting to `false`.
+
 /logistics off hands harvesters back to vanilla, stops managed transport duty,
 ends transfer sessions and pauses reward accrual/payouts. Surviving cargo and
 already-earned pending rewards remain; feature sub-switch settings are retained.
@@ -377,3 +396,5 @@ checks: mixed ground/air hauling through depletion, native harvester and pickup
 rewards (including zero cooldown), unchanged shared collection limits, and reload
 of a non-harvester setting preserving queue order/home patches. Compare populated
 matches at similar unit counts when reviewing timing logs.
+
+All mod-owned server logging (including startup, status, warnings and errors) requires the existing `Debug` setting to be enabled. Player chat replies are unaffected. MelonLoader itself may still print mod loading messages.

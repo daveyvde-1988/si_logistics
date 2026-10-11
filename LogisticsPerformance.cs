@@ -57,7 +57,7 @@ namespace Si_Logistics
                     PerfTicks++; PerfTotalMs += ms; PerfMaxMs = Math.Max(PerfMaxMs, ms);
                     if (Time.unscaledTime >= PerfNextReport)
                     {
-                        MelonLogger.Msg("[LogisticsPerf] transfer ticks=" + PerfTicks + " avgMs=" + (PerfTotalMs / PerfTicks).ToString("F3") +
+                        DebugMsg("[LogisticsPerf] transfer ticks=" + PerfTicks + " avgMs=" + (PerfTotalMs / PerfTicks).ToString("F3") +
                             " maxMs=" + PerfMaxMs.ToString("F3") + " serviceSearches=" + PerfSearches + " navProbes=" + PerfNavProbes +
                             " sameFrameServiceHits=" + PerfServiceHits);
                         PerfNextReport = Time.unscaledTime + 30f;

@@ -89,22 +89,24 @@ namespace Si_Logistics
         }
         private static void LogisticsPlayerLeft(Player player)
         {
+            foreach (var pair in new List<KeyValuePair<long, ScoreAccount>>(ScoreRewards))
+                if (ReferenceEquals(pair.Value.Player, player)) ScoreRewards.Remove(pair.Key);
             foreach (var pair in new List<KeyValuePair<long, RewardAccount>>(Rewards))
                 if (ReferenceEquals(pair.Value.Player, player)) Rewards.Remove(pair.Key);
         }
         private static void LogisticsMatchStarted(GameMode mode)
-        { ResetAITransports(false); ResetHarvesterFix(false); RewardEpoch++; Rewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear(); MatchAcceptsRewards = true; }
+        { ResetAITransports(false); ResetHarvesterFix(false); RewardEpoch++; Rewards.Clear(); ScoreRewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear(); MatchAcceptsRewards = true; }
         private static void LogisticsMatchEnded(GameMode mode, Team winner)
-        { ResetAITransports(false); ResetHarvesterFix(false); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear(); }
+        { ResetAITransports(false); ResetHarvesterFix(false); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); ScoreRewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear(); }
         public override void OnSceneWasInitialized(int buildIndex, string sceneName) => BindRewardEvents();
         public override void OnSceneWasUnloaded(int buildIndex, string sceneName)
-        { ResetAITransports(false); ResetHarvesterFix(false); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear(); }
+        { ResetAITransports(false); ResetHarvesterFix(false); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); ScoreRewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear(); }
         public override void OnDeinitializeMelon()
         {
             ResetAITransports(true);
             ResetHarvesterFix(true);
             GameEvents.OnUnitSpawned -= HarvesterSpawned;
-            RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear();
+            RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); ScoreRewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear();
             GameEvents.OnGameStarted -= LogisticsMatchStarted;
             GameEvents.OnGameEnded -= LogisticsMatchEnded;
             GameEvents.OnPlayerLeft -= LogisticsPlayerLeft;
@@ -121,6 +123,7 @@ namespace Si_Logistics
             internal Player Driver;
             internal Team Team;
             internal decimal Rate;
+            internal int ScoreRate;
             internal long Retrieved, Accepted;
             internal bool Consumed;
             internal int Epoch;
@@ -165,14 +168,16 @@ namespace Si_Logistics
                     __state.Consumed = true;
                     int delivered = (int)Math.Min(int.MaxValue, Math.Min(__state.Retrieved, __state.Accepted));
                     QueueReward(__state.Driver, delivered, __state.Rate, __state.Epoch);
+                    AwardScore(__state.Driver, delivered, __state.ScoreRate, false, __state.Epoch);
                 }
             }
-            catch (Exception error) { MelonLogger.Warning("Logistics harvester reward: " + error.Message); }
+            catch (Exception error) { DebugWarning("Logistics harvester reward: " + error.Message); }
             finally
             {
                 CurrentDeposit = __state.Parent;
                 __state.Parent = null; __state.Unit = null; __state.Holder = null;
                 __state.Driver = null; __state.Team = null; __state.Rate = 0;
+                __state.ScoreRate = 0;
                 __state.Retrieved = __state.Accepted = 0; __state.Consumed = false; __state.Epoch = 0;
                 // Bound retained storage and never retain Unity objects between updates.
                 if (DepositReceiptPool != null && DepositReceiptPool.Count < 8) DepositReceiptPool.Push(__state);
@@ -188,6 +193,7 @@ namespace Si_Logistics
             if (receipt != null && receipt.Holder == holder && removed > 0)
             {
                 receipt.Driver = driver; receipt.Rate = rate;
+                receipt.ScoreRate = Cfg.LogisticsScore ? Cfg.ScoreUnload : 0;
                 receipt.Retrieved += Math.Min(Math.Max(0, requested), removed);
             }
             return removed;
