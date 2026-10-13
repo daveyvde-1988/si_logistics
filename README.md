@@ -155,6 +155,14 @@ and AI transport allocation limits/check intervals. The sections below document
 these functions. Reload rebuilds harvester reservations only when validated
 harvester settings change; changes to rates, sounds or rewards preserve them.
 
+Sounds are enabled by default in newly generated configs. Copy
+`logistics_tick.wav` and `logistics_ding.wav` into the server's `UserData/sounds`
+folder; WAV files are loaded at runtime and are not embedded in the DLL. The
+controlling player hears a tick on each successful loading transfer and a ding
+when cargo becomes full. AI-only transports and unloading are silent. Missing
+files are silently skipped. Existing configs retain their `Sounds.Enabled`
+value; set it to `true` and run `/logistics reload` to enable sounds there.
+
 
 ## Harvester fix
 

@@ -122,7 +122,7 @@
     "BarEmpty": "-"
   },
   "Sounds": {
-    "Enabled": false,
+    "Enabled": true,
     "OnFull": "logistics_ding.wav",
     "OnLoad": "logistics_tick.wav"
   },

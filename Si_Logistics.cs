@@ -71,7 +71,7 @@ namespace Si_Logistics
 
         public sealed class SoundConfig
         {
-            public bool Enabled = false;
+            public bool Enabled = true;
             public string OnFull = "logistics_ding.wav";
             public string OnLoad = "logistics_tick.wav";
         }
