@@ -142,6 +142,7 @@
     "ReservationDistanceIncrementMetres": 50
   },
   "AItransport": {
+    "Enabled": true,
     "NearHarvesterDistanceMetres": 300,
     "MediumHarvesterDistanceMetres": 600,
     "NearGroundTransports": 2,

@@ -113,6 +113,8 @@ namespace Si_Logistics
             GameEvents.OnGameStarted -= LogisticsMatchStarted;
             GameEvents.OnGameEnded -= LogisticsMatchEnded;
             GameEvents.OnPlayerLeft -= LogisticsPlayerLeft;
+            HelperMethods.UnregisterAdminCommand("logisticsscorecomander");
+            HelperMethods.UnregisterAdminCommand("logisticsscorecommander");
             HarmonyInstance.UnpatchSelf();
         }
 

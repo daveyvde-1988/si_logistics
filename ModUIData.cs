@@ -1,17 +1,53 @@
 ﻿using System.Globalization;
 using ModUI;
+using System;
+using System.Collections.Generic;
 namespace Si_Logistics
 {
     public sealed partial class LogisticsMod
     {
+        // Shared ModUI data is server-wide. Count enrolled duty, including travelling
+        // and waiting transports, while excluding stale jobs awaiting the next tick.
+        private static string LogisticsDutySummary()
+        {
+            int total = 0;
+            var types = new SortedDictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            if (AITransportActive)
+                foreach (var job in AITransportJobs.Values)
+                {
+                    var transport = job.Transport;
+                    if (!AITransportEligible(transport) || transport.Team != job.Team) continue;
+                    string name = transport.ObjectInfo.DisplayName.ToString();
+                    types.TryGetValue(name, out int count);
+                    types[name] = count + 1;
+                    total++;
+                }
+            if (total == 0) return "0";
+            var details = new List<string>();
+            foreach (var type in types)
+                details.Add(type.Key + ": " + type.Value.ToString(CultureInfo.InvariantCulture));
+            return total.ToString(CultureInfo.InvariantCulture) + " (" + string.Join(", ", details) + ")";
+        }
+
+        private static int LogisticsRefineryCount()
+        {
+            int count = 0;
+            if (Structure.Structures != null)
+                foreach (var refinery in Structure.Structures)
+                    if (refinery && refinery.Team && AIRefineryTarget(refinery, refinery.Team)) count++;
+            return count;
+        }
+
         public static string ModUIData()
         {
             string F(double v)=>v.ToString("0.######",CultureInfo.InvariantCulture);
             return ModUIExport.New()
-                .Info("Logistics "+(Cfg.Enabled?"ON":"OFF")+" — server settings; cargo details are available on request.")
+                .Info("Carry Balterium from friendly harvesters to refineries using ground and air transports. Automate transport deliveries and harvester routing, and earn credit and score rewards for resource transfers and deliveries. Includes configurable commander scoring.")
                 .Status("master","Logistics",Cfg.Enabled?"ON":"OFF")
                 .Status("harvesterfix","Harvester recovery",Cfg.HarvesterFix.Enabled?"ON":"OFF")
                 .Status("aitransport","AI transport",Cfg.AITransport.Enabled?"ON":"OFF")
+                .Status("transport-duty","Active AI duty (server)",LogisticsDutySummary())
+                .Status("refineries","Refineries (server)",LogisticsRefineryCount().ToString(CultureInfo.InvariantCulture))
                 .Action("/logistics status","Status / my cargo","Request current status and your transport cargo.")
                 .Action("/logistics help","Help","Show the current command syntax.")
                 .OnOff("/logistics enabled","Logistics","Enable or disable through the existing master handler.",true,Cfg.Enabled).Presentation("switch","General")

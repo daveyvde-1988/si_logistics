@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -9,13 +9,13 @@ using Newtonsoft.Json;
 using SilicaAdminMod;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(Si_Logistics.LogisticsMod), "Harvester Logistics Prototype", "0.9.1", "Silica community prototype")]
+[assembly: MelonInfo(typeof(Si_Logistics.LogisticsMod), "Logistics", "0.9.3", "Silica community prototype")]
 [assembly: MelonGame("Bohemia Interactive", "Silica")]
 [assembly: MelonOptionalDependencies("Admin Mod")]
 
 namespace Si_Logistics
 {
-    // UserData/Logistics_cfg/Si_Logistics_Config.json, read when the mod loads and on "/logistics reload".
+    // UserData/cfg/Logistics/Si_Logistics_Config.json, read when the mod loads and on "/logistics reload".
     // The file wins over these defaults; missing keys keep the default. The file is only rewritten
     // when an admin changes a setting by chat command (unknown keys are dropped then).
     public sealed class LogisticsConfig
@@ -72,6 +72,7 @@ namespace Si_Logistics
         public sealed class SoundConfig
         {
             public bool Enabled = true;
+            // Existing config keys: OnLoad = transfer start; OnFull = transfer stop.
             public string OnFull = "logistics_ding.wav";
             public string OnLoad = "logistics_tick.wav";
         }
@@ -95,7 +96,7 @@ namespace Si_Logistics
         private static readonly HashSet<string> LoggedDriverVehicles = new HashSet<string>();
         private static LogisticsConfig Cfg = new LogisticsConfig();
         private static readonly string ConfigPath =
-            Path.Combine(MelonEnvironment.UserDataDirectory, "Logistics_cfg", "Si_Logistics_Config.json");
+            Path.Combine(MelonEnvironment.UserDataDirectory, "cfg","Logistics", "Si_Logistics_Config.json");
         private float _elapsed;
 
         // All mod-owned server log output follows the runtime Debug setting.
@@ -120,6 +121,12 @@ namespace Si_Logistics
             string previousHarvesterSettings = JsonConvert.SerializeObject(Cfg.HarvesterFix);
             try
             {
+                string legacy = Path.Combine(MelonEnvironment.UserDataDirectory, "Logistics_cfg", "Si_Logistics_Config.json");
+                if (!File.Exists(ConfigPath) && File.Exists(legacy))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath));
+                    File.Copy(legacy, ConfigPath);
+                }
                 if (File.Exists(ConfigPath))
                 {
                     // Replace: the default (Auto) appends file lists to the initializer defaults,
@@ -217,8 +224,8 @@ namespace Si_Logistics
             HelperMethods.RegisterPlayerCommand("logisticsscore", OnScoreCommand, Cfg.Commands.HideFromChat);
             HelperMethods.RegisterPlayerCommand("scoreunload", OnScoreCommand, Cfg.Commands.HideFromChat);
             HelperMethods.RegisterPlayerCommand("scoretransfer", OnScoreCommand, Cfg.Commands.HideFromChat);
-            HelperMethods.RegisterPlayerCommand("logisticsscorecomander", OnCommanderScoreCommand, Cfg.Commands.HideFromChat);
-            HelperMethods.RegisterPlayerCommand("logisticsscorecommander", OnCommanderScoreCommand, Cfg.Commands.HideFromChat);
+            HelperMethods.RegisterAdminCommand("logisticsscorecomander", OnCommanderScoreCommand, Power.Generic, "Enable or disable commander logistics scoring: on|off.");
+            HelperMethods.RegisterAdminCommand("logisticsscorecommander", OnCommanderScoreCommand, Power.Generic, "Enable or disable commander logistics scoring: on|off.");
         }
 
         private static void ReleaseLogisticsControl()
@@ -329,6 +336,7 @@ namespace Si_Logistics
                 " | rewards " + RewardSettings() + (KohCredits.Available ? " (KoH linked)" : " (KoH not found)"));
             ShowHarvesterStatus(caller);
             ShowAITransportStatus(caller);
+            Reply(caller, "Refineries (server): " + LogisticsRefineryCount() + ".");
             Reply(caller, "Logistics score " + (Cfg.LogisticsScore ? "ON" : "OFF") +
                 " | unload " + Cfg.ScoreUnload + " | transfer " + Cfg.ScoreTransfer + " points per 100 Balterium" +
                 (Cfg.Enabled ? "." : " (master Logistics is OFF)."));
@@ -534,7 +542,6 @@ namespace Si_Logistics
                     Progress(transport, cargo);
                     if (Cfg.Debug) DebugMsg("Logistics LOAD " + removed + " from " + harvester.ObjectInfo.DisplayName + "; cargo=" + cargo.Amount);
                     bool loaded = cargo.Amount >= CapacityFor(transport);
-                    PlaySound(transport, loaded ? Cfg.Sounds.OnFull : Cfg.Sounds.OnLoad);
                     if (loaded) SetTransfer(transport, cargo, null);
                 }
                 if (removed > 0) return true;
@@ -651,6 +658,7 @@ namespace Si_Logistics
                     (previous == "Unloading" ? ", delivered " + (cargo.TransferFrom - cargo.Amount) : ""));
             if (previous != null && driver != null)
             {
+                PlaySound(transport, Cfg.Sounds.OnFull);
                 int percent = TransferPercent(cargo);
                 HelperMethods.SendChatMessageToPlayer(driver, HelperMethods.chatPrefix,
                     " " + previous + (TransferComplete(cargo) ? " complete " : " stopped ") + Bar(percent) +
@@ -662,6 +670,7 @@ namespace Si_Logistics
             cargo.TransferTotal = Math.Max(1, total);
             cargo.NextProgress = Time.unscaledTime + Cfg.Chat.ProgressIntervalSeconds;
             cargo.LastPercent = -1;
+            PlaySound(transport, Cfg.Sounds.OnLoad);
             if (driver != null)
                 HelperMethods.SendChatMessageToPlayer(driver, HelperMethods.chatPrefix,
                     transfer == "Loading" ? " Loading started: cargo " + cargo.Amount + "/" + total + " Balterium."

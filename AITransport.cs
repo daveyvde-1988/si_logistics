@@ -11,7 +11,7 @@ namespace Si_Logistics
 {
     public sealed class AITransportConfig
     {
-        public bool Enabled = false;
+        public bool Enabled = true;
         [JsonProperty("airloadradius")] public float AirLoadRadius = 150f;
         [JsonProperty("airunloadradius")] public float AirUnloadRadius = 150f;
         [JsonProperty("groundloadradius")] public float GroundLoadRadius = 40f;
@@ -108,7 +108,7 @@ namespace Si_Logistics
 
         private static void ShowAITransportStatus(Player caller)
         {
-            Reply(caller, "AI transport " + (Cfg.AITransport.Enabled ? "ON" : "OFF") + " | assigned " + AITransportJobs.Count +
+            Reply(caller, "AI transport " + (Cfg.AITransport.Enabled ? "ON" : "OFF") + " | active duty (server): " + LogisticsDutySummary() +
                 " | right-click a friendly harvester to enrol in automatic logistics duty; a new order cancels. Details in server log.");
             if (!Cfg.Enabled && Cfg.AITransport.Enabled) Reply(caller, "AI transport paused by Logistics master switch.");
             if (!Cfg.Debug) return;

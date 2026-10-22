@@ -1,4 +1,4 @@
-﻿# Si_Logistics (0.8.1)
+# Si_Logistics (0.8.1)
 
 Server-side resource transfers, driver rewards, harvester routing and automatic
 transport duty, with consolidated controls and a performance/cleanup pass.
@@ -8,7 +8,7 @@ transport duty, with consolidated controls and a performance/cleanup pass.
 Every command below works with **/logistics** or **/logi**. Subcommands are
 case-insensitive, including Transfershare, Harvesterfix and AItransport.
 Admin means Admin Mod Generic permission; server-console callers are allowed.
-Successful setting changes save to UserData/Logistics_cfg/Si_Logistics_Config.json.
+Successful setting changes save to UserData/cfg/Logistics/Si_Logistics_Config.json.
 
 | Command | Access | Function |
 | --- | --- | --- |
@@ -27,7 +27,7 @@ Successful setting changes save to UserData/Logistics_cfg/Si_Logistics_Config.js
 | /logistics debug on/off | Admin | Diagnostics; status also dumps detailed harvester/transport state while enabled. |
 | /logistics reload | Admin | Reload JSON settings. |
 | /logistics harvesterfix on/off | Admin | Harvester controller sub-switch; defaults ON. |
-| /logistics aitransport on/off | Admin | Automatic transport duty sub-switch; defaults OFF. |
+| /logistics aitransport on/off | Admin | Automatic transport duty sub-switch; defaults ON. |
 
 These are the complete chat controls. The standalone /harvesterfix and
 /aitransport commands, bonus toggle and configurable extra command aliases were
@@ -59,13 +59,15 @@ uses `/logistics debug on|off`, with `Debug` defaulting to `false`.
 
 `CommanderScore.Enabled` defaults to `true`. Admin-only
 `/logisticsscorecomander on|off` (also `/logisticsscorecommander`) controls it.
+Both spellings are registered as admin commands requiring Generic power; the handler also enforces that permission.
+The mod's display name is **Logistics**.
 `/logistics status` reports enabled/active state and KoH purchase-hook readiness.
 It follows the master Logistics switch, independently of the player delivery score
 switch. Awards and penalties update the current commander's normal round score
 silently; diagnostic output follows Logistics `Debug` only.
 
 Configure `CommanderScore.Rules` in
-`UserData/Logistics_cfg/Si_Logistics_Config.json`, then `/logistics reload`.
+`UserData/cfg/Logistics/Si_Logistics_Config.json`, then `/logistics reload`.
 The default rules use **resource cost** as object value, round down after division,
 and apply a minimum of 1 point:
 
@@ -158,8 +160,12 @@ harvester settings change; changes to rates, sounds or rewards preserve them.
 Sounds are enabled by default in newly generated configs. Copy
 `logistics_tick.wav` and `logistics_ding.wav` into the server's `UserData/sounds`
 folder; WAV files are loaded at runtime and are not embedded in the DLL. The
-controlling player hears a tick on each successful loading transfer and a ding
-when cargo becomes full. AI-only transports and unloading are silent. Missing
+controlling player hears one tick when loading or unloading starts and one ding
+when it stops or completes. Waiting beside an empty harvester keeps the loading
+session open without repeating sounds. Existing config keys are retained:
+`Sounds.OnLoad` selects the start sound and `Sounds.OnFull` selects the stop sound.
+Sounds still use Admin Mod's voice channel and may show the speaking indicator.
+AI-only transports are silent. Missing
 files are silently skipped. Existing configs retain their `Sounds.Enabled`
 value; set it to `true` and run `/logistics reload` to enable sounds there.
 
@@ -180,7 +186,7 @@ With the fix off, its patches pass through to vanilla harvester AI.
 - `/logistics reload`: reloads settings. Changed harvester settings release and
   rebuild reservations when enabled; unrelated setting changes preserve them.
 
-Config: `UserData/Logistics_cfg/Si_Logistics_Config.json`:
+Config: `UserData/cfg/Logistics/Si_Logistics_Config.json`:
 
 ```json
 "harvesterfix": {
@@ -319,7 +325,13 @@ stalls, run `/logistics status` before moving it so the log captures the state.
 
 ## Automatic AI transport duty (0.7.0)
 
-/logistics aitransport on|off controls transport duty beneath the master switch. On/off requires
+/logistics aitransport on|off controls transport duty beneath the master switch.
+It defaults to ON for new configs and missing settings; saved OFF settings remain OFF.
+ModUI and `/logistics status` show server-wide active duty totals by transport
+display name and the number of live structures accepting refinery deliveries.
+Duty includes enrolled transports travelling, transferring or waiting; destroyed,
+released and player-controlled transports are excluded.
+On/off requires
 Admin Generic permission and persists in the existing JSON CFG. Right-clicking
 a friendly harvester with an eligible AI transport enrols it in logistics duty.
 The game's accepted immediate Defend order is the native friendly-target Follow
@@ -365,7 +377,7 @@ AI settings under the existing AItransport category (illustrative defaults):
 
 ```json
 "AItransport": {
-  "Enabled": false,
+  "Enabled": true,
   "airloadradius": 150.0,
   "airunloadradius": 150.0,
   "groundloadradius": 40.0,
@@ -470,3 +482,5 @@ All mod-owned server logging (including startup, status, warnings and errors) re
 ## Optional ModUI integration (0.9.1)
 
 ModUIData.cs and ModUI_Export.cs describe the current server commands/settings for Si_ServerModUI 2.0.0. No UI DLL is required by Logistics. The new /logistics enabled on|off alias uses the existing validated master handler. Existing config paths, harvester/AI transport, rewards and scoring remain owned here. Purchase exclusions support compatible separate Si_Buy and legacy KoH handlers and fail closed on unknown signatures. This source was built, not installed; user-owned live verification remains required.
+
+Configuration now lives in `UserData/cfg/Logistics/Si_Logistics_Config.json`. Startup and `/logistics reload` import the legacy `UserData/Logistics_cfg/Si_Logistics_Config.json` only if the new file is missing. Existing destination settings take precedence; all saves use the new path.
