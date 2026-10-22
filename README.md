@@ -1,38 +1,57 @@
 # Si_Logistics (0.8.1)
 
-Server-side resource transfers, driver rewards, harvester routing and automatic
-transport duty, with consolidated controls and a performance/cleanup pass.
+Move Balterium from harvesters to transports and refineries, reward the drivers,
+and keep the team's supply runs moving. Runs on the dedicated server with
+MelonLoader and Admin Mod; players do not need a client mod.
+
+## Features at a glance
+
+- Load and unload Balterium with supported ground and air transports.
+- Reward player drivers with personal credits through King of the Hill and with normal round score.
+- Improve harvester routing and assign automatic transport duty.
+- Award configurable commander score for production, construction, combat and resource deliveries, with loss penalties.
+- Configure cargo capacities, transfer speeds, pickup ranges and reward rates.
 
 ## Commands
 
-Every command below works with **/logistics** or **/logi**. Subcommands are
+Every **/logistics** subcommand below also works with **/logi**. Subcommands are
 case-insensitive, including Transfershare, Harvesterfix and AItransport.
 Admin means Admin Mod Generic permission; server-console callers are allowed.
 Successful setting changes save to UserData/cfg/Logistics/Si_Logistics_Config.json.
 
 | Command | Access | Function |
 | --- | --- | --- |
-| /logistics or /logistics status | Everyone | Settings, effective feature states, reward rates and cargo in your controlled transport. |
-| /logistics help | Everyone | List available commands. |
-| /logistics on/off | Admin | Master switch for transfers, rewards, Harvesterfix and AItransport. |
-| /logistics share <0–1> | Admin | Transport unloading AND independent harvester refinery reward rate; default 0.10. |
-| /logistics transfershare <0–1> | Admin | Harvester driver's reward for a harvester-to-transport pickup; default 0.08. |
-| /logistics capacity air <n> | Admin | Aircraft cargo capacity; positive integer. |
-| /logistics capacity ground <n> | Admin | Ground transport cargo capacity; positive integer. |
-| /logistics rate load <n> | Admin | Ground loading units per second; positive integer. |
-| /logistics rate unload <n> | Admin | Ground unloading units per second; positive integer. |
-| /logistics radius load <metres> | Admin | Player-driven pickup radius; finite number greater than zero. |
-| /logistics radius unload <metres> | Admin | Player-driven unloading radius; finite number greater than zero. |
-| /logistics cooldown <seconds> | Admin | Delivery cooldown AND delay for new driver reward payout windows; finite, zero or greater. |
-| /logistics debug on/off | Admin | Diagnostics; status also dumps detailed harvester/transport state while enabled. |
-| /logistics reload | Admin | Reload JSON settings. |
-| /logistics harvesterfix on/off | Admin | Harvester controller sub-switch; defaults ON. |
-| /logistics aitransport on/off | Admin | Automatic transport duty sub-switch; defaults ON. |
+| `/logistics` or `/logistics status` | Everyone | Settings, effective feature states, reward rates and cargo in your controlled transport. |
+| `/logistics help` | Everyone | List available commands. |
+| `/logistics on/off` | Admin | Master switch for transfers, rewards, Harvesterfix and AItransport; alias `/logistics enabled on/off`. |
+| `/logistics share <0–1>` | Admin | Transport unloading AND independent harvester refinery reward rate; default 0.10. |
+| `/logistics transfershare <0–1>` | Admin | Harvester driver's reward for a harvester-to-transport pickup; default 0.08. |
+| `/logistics capacity air <n>` | Admin | Aircraft cargo capacity; positive integer. |
+| `/logistics capacity ground <n>` | Admin | Ground transport cargo capacity; positive integer. |
+| `/logistics rate load <n>` | Admin | Ground loading units per second; positive integer. |
+| `/logistics rate unload <n>` | Admin | Ground unloading units per second; positive integer. |
+| `/logistics radius load <metres>` | Admin | Player-driven pickup radius; finite number greater than zero. |
+| `/logistics radius unload <metres>` | Admin | Player-driven unloading radius; finite number greater than zero. |
+| `/logistics cooldown <seconds>` | Admin | Delivery cooldown AND delay for new driver reward payout windows; finite, zero or greater. |
+| `/logistics debug on/off` | Admin | Diagnostics; status also dumps detailed harvester/transport state while enabled. |
+| `/logistics reload` | Admin | Reload JSON settings. |
+| `/logistics harvesterfix on/off` | Admin | Harvester controller sub-switch; defaults ON. |
+| `/logistics aitransport on/off` | Admin | Automatic transport duty sub-switch; defaults ON. |
+| `/logisticsscore on/off` | Admin | Enable or disable player delivery/transfer score rewards. |
+| `/scoreunload <0..100>` | Admin | Score per 100 Balterium accepted at a refinery. |
+| `/scoretransfer <0..100>` | Admin | Harvester-driver score per 100 Balterium transferred to a player-driven transport. |
+| `/logisticsscorecomander on/off` | Admin | Enable or disable commander scoring; /logisticsscorecommander is an alias. |
 
-These are the complete chat controls. The standalone /harvesterfix and
+The /logi alias applies to /logistics subcommands; the four score commands above are separate commands.
+Use one of `on` or `off` wherever `on/off` is shown.
+
+The standalone /harvesterfix and
 /aitransport commands, bonus toggle and configurable extra command aliases were
 removed. Use /logistics status for both feature summaries. Debug status retains
 per-vehicle diagnostic dumps without adding separate status commands.
+
+<details>
+<summary>Detailed documentation, configuration and version history</summary>
 
 ## Master switch and rewards
 
@@ -484,3 +503,5 @@ All mod-owned server logging (including startup, status, warnings and errors) re
 ModUIData.cs and ModUI_Export.cs describe the current server commands/settings for Si_ServerModUI 2.0.0. No UI DLL is required by Logistics. The new /logistics enabled on|off alias uses the existing validated master handler. Existing config paths, harvester/AI transport, rewards and scoring remain owned here. Purchase exclusions support compatible separate Si_Buy and legacy KoH handlers and fail closed on unknown signatures. This source was built, not installed; user-owned live verification remains required.
 
 Configuration now lives in `UserData/cfg/Logistics/Si_Logistics_Config.json`. Startup and `/logistics reload` import the legacy `UserData/Logistics_cfg/Si_Logistics_Config.json` only if the new file is missing. Existing destination settings take precedence; all saves use the new path.
+
+</details>
