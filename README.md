@@ -1,4 +1,4 @@
-# Si_Logistics (0.8.1)
+﻿# Si_Logistics (0.8.1)
 
 Server-side resource transfers, driver rewards, harvester routing and automatic
 transport duty, with consolidated controls and a performance/cleanup pass.
@@ -466,3 +466,7 @@ of a non-harvester setting preserving queue order/home patches. Compare populate
 matches at similar unit counts when reviewing timing logs.
 
 All mod-owned server logging (including startup, status, warnings and errors) requires the existing `Debug` setting to be enabled. Player chat replies are unaffected. MelonLoader itself may still print mod loading messages.
+
+## Optional ModUI integration (0.9.1)
+
+ModUIData.cs and ModUI_Export.cs describe the current server commands/settings for Si_ServerModUI 2.0.0. No UI DLL is required by Logistics. The new /logistics enabled on|off alias uses the existing validated master handler. Existing config paths, harvester/AI transport, rewards and scoring remain owned here. Purchase exclusions support compatible separate Si_Buy and legacy KoH handlers and fail closed on unknown signatures. This source was built, not installed; user-owned live verification remains required.

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -9,7 +9,7 @@ using Newtonsoft.Json;
 using SilicaAdminMod;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(Si_Logistics.LogisticsMod), "Harvester Logistics Prototype", "0.9.0", "Silica community prototype")]
+[assembly: MelonInfo(typeof(Si_Logistics.LogisticsMod), "Harvester Logistics Prototype", "0.9.1", "Silica community prototype")]
 [assembly: MelonGame("Bohemia Interactive", "Silica")]
 [assembly: MelonOptionalDependencies("Admin Mod")]
 
@@ -248,7 +248,13 @@ namespace Si_Logistics
                     return;
                 }
 
-                int expected = (sub == "capacity" || sub == "rate" || sub == "radius") ? 4 :
+                bool enabledAlias = sub == "enabled";
+                if(enabledAlias)
+                {
+                    if(parts.Length!=3||(a1!="on"&&a1!="off")){Reply(caller,"Usage: /logistics enabled on|off");return;}
+                    sub=a1;
+                }
+                int expected = enabledAlias ? 3 : (sub == "capacity" || sub == "rate" || sub == "radius") ? 4 :
                     (sub == "on" || sub == "off" || sub == "reload") ? 2 : 3;
                 if (parts.Length != expected) { ShowHelp(caller); return; }
 

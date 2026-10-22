@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -75,19 +75,21 @@ namespace Si_Logistics
         private void InstallCommanderScore()
         {
             // Observe the purchase scope without referencing or changing KoH's DLL/config.
-            Type koh = AppDomain.CurrentDomain.GetAssemblies()
-                .Select(assembly => assembly.GetType("Si_KingOfTheHill.KingOfTheHill", false)).FirstOrDefault(type => type != null);
-            CommanderPurchaseHookReady = koh == null;
+            var purchaseOwners = AppDomain.CurrentDomain.GetAssemblies()
+                .SelectMany(assembly=>new[]{assembly.GetType("Si_Buy.Buy",false),assembly.GetType("Si_KingOfTheHill.KingOfTheHill",false)})
+                .Where(type=>type!=null).Distinct().ToArray();
+            CommanderPurchaseHookReady = purchaseOwners.Length==0;
             try
             {
-                if (koh != null)
+                foreach(var owner in purchaseOwners)
                 {
-                    MethodInfo purchase = AccessTools.GetDeclaredMethods(koh).Single(method => method.Name == "TryPurchase" &&
-                        method.IsStatic && method.ReturnType == typeof(void) && method.GetParameters().Length == 2 &&
-                        method.GetParameters()[0].ParameterType == typeof(Player));
-                    HarmonyInstance.Patch(purchase,
-                        prefix: new HarmonyMethod(typeof(LogisticsMod), nameof(CommanderPurchaseBegin)),
-                        finalizer: new HarmonyMethod(typeof(LogisticsMod), nameof(CommanderPurchaseEnd)));
+                    var methods=AccessTools.GetDeclaredMethods(owner).Where(method=>method.Name=="TryPurchase"&&method.IsStatic&&method.ReturnType==typeof(void)&&
+                        method.GetParameters().Length==2&&method.GetParameters()[0].ParameterType==typeof(Player)).ToArray();
+                    // New KoH has no purchase handler; Si_Buy owns it. An unknown Buy signature fails closed.
+                    if(methods.Length==0&&owner.FullName=="Si_KingOfTheHill.KingOfTheHill"&&purchaseOwners.Any(t=>t.FullName=="Si_Buy.Buy"))continue;
+                    if(methods.Length!=1)throw new InvalidOperationException("Unknown purchase handler in "+owner.FullName);
+                    HarmonyInstance.Patch(methods[0],prefix:new HarmonyMethod(typeof(LogisticsMod),nameof(CommanderPurchaseBegin)),
+                        finalizer:new HarmonyMethod(typeof(LogisticsMod),nameof(CommanderPurchaseEnd)));
                 }
                 var spawn = AccessTools.Method(typeof(Game), "SpawnPrefab", new[] { typeof(GameObject), typeof(Player),
                     typeof(Team), typeof(Vector3), typeof(Quaternion), typeof(bool), typeof(bool) });
@@ -97,7 +99,7 @@ namespace Si_Logistics
                 HarmonyInstance.Patch(instant,
                     transpiler: new HarmonyMethod(typeof(LogisticsMod), nameof(CommanderObserveInstantSpawn)));
                 CommanderPurchaseHookReady = true;
-                DebugMsg("Commander score hooks ready; KoH " + (koh == null ? "not installed" : "purchase exclusion installed") + ".");
+                DebugMsg("Commander score hooks ready; compatible purchase exclusions installed.");
             }
             catch (Exception error)
             {
