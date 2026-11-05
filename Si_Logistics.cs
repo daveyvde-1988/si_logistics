@@ -31,14 +31,14 @@ namespace Si_Logistics
         [JsonProperty("AItransport")]
         public AITransportConfig AITransport = new AITransportConfig();
         public List<string> TransportUnits = new List<string> { "Shuttle", "Dropship", "Squad Transport", "Platoon Hauler" };
-        public int AirCargoCapacity = 9000;
-        public int GroundCargoCapacity = 3000;
+        public int AirCargoCapacity = 5000;
+        public int GroundCargoCapacity = 3500;
         [JsonProperty("airloadunitspersecond")] public int AirLoadUnitsPerSecond = 500;
         [JsonProperty("airunloadunitspersecond")] public int AirUnloadUnitsPerSecond = 500;
         public int LoadUnitsPerSecond = 300;
         public int UnloadUnitsPerSecond = 300;
-        public float LoadRadius = 40f;
-        public float UnloadRadius = 65f;
+        public float LoadRadius = 45f;
+        public float UnloadRadius = 70f;
         public float DeliveryCooldownSeconds = 20f;
         public BonusConfig PersonalBonus = new BonusConfig();
         public ChatConfig Chat = new ChatConfig();
@@ -55,7 +55,7 @@ namespace Si_Logistics
         public sealed class ChatConfig
         {
             // Seconds between progress-bar messages while loading/unloading (0 = start/stop only).
-            public float ProgressIntervalSeconds = 3f;
+            public float ProgressIntervalSeconds = 2f;
             public int ProgressBarLength = 10;
             public string BarFilled = "#";
             public string BarEmpty = "-";
@@ -64,8 +64,9 @@ namespace Si_Logistics
         public sealed class BonusConfig
         {
             // Driver rewards are always enabled while the master switch is on.
-            public float Share = 0.10f;
-            public float TransferShare = 0.08f;
+            public float HarvesterShare = 0.07f;
+            public float TransportShare = 0.09f;
+            public float TransferShare = 0.06f;
             public bool AnnounceToPlayer = true;
         }
 
@@ -90,6 +91,8 @@ namespace Si_Logistics
             public float NextProgress;
             public int LastPercent = -1;
             public float LastDiagnostic;
+            public Unit LoadTarget;
+            public Structure UnloadTarget;
         }
 
         private static readonly Dictionary<int, Cargo> CargoByTransport = new Dictionary<int, Cargo>();
@@ -137,21 +140,22 @@ namespace Si_Logistics
                     if (transport != null)
                     {
                         if (transport.GetValue("airloadradius", StringComparison.OrdinalIgnoreCase) == null)
-                            transport["airloadradius"] = transport.GetValue("DropshipLoadRadius", StringComparison.OrdinalIgnoreCase) ?? 150f;
+                            transport["airloadradius"] = transport.GetValue("DropshipLoadRadius", StringComparison.OrdinalIgnoreCase) ?? 90f;
                         if (transport.GetValue("airunloadradius", StringComparison.OrdinalIgnoreCase) == null)
-                            transport["airunloadradius"] = transport.GetValue("DropshipUnloadRadius", StringComparison.OrdinalIgnoreCase) ?? 150f;
+                            transport["airunloadradius"] = transport.GetValue("DropshipUnloadRadius", StringComparison.OrdinalIgnoreCase) ?? 120f;
                         if (transport.GetValue("groundloadradius", StringComparison.OrdinalIgnoreCase) == null)
-                            transport["groundloadradius"] = json.GetValue("LoadRadius", StringComparison.OrdinalIgnoreCase) ?? 40f;
+                            transport["groundloadradius"] = json.GetValue("LoadRadius", StringComparison.OrdinalIgnoreCase) ?? 75f;
                         if (transport.GetValue("groundunloadradius", StringComparison.OrdinalIgnoreCase) == null)
-                            transport["groundunloadradius"] = json.GetValue("UnloadRadius", StringComparison.OrdinalIgnoreCase) ?? 65f;
+                            transport["groundunloadradius"] = json.GetValue("UnloadRadius", StringComparison.OrdinalIgnoreCase) ?? 80f;
                     }
                     var bonus = json.GetValue("PersonalBonus", StringComparison.OrdinalIgnoreCase) as Newtonsoft.Json.Linq.JObject;
                     if (bonus != null && bonus.GetValue("TransferShare", StringComparison.OrdinalIgnoreCase) == null)
-                        bonus["TransferShare"] = bonus.GetValue("HarvesterTransferShare", StringComparison.OrdinalIgnoreCase) ?? 0.08f;
+                        bonus["TransferShare"] = bonus.GetValue("HarvesterTransferShare", StringComparison.OrdinalIgnoreCase) ?? 0.06f;
                     Cfg = JsonConvert.DeserializeObject<LogisticsConfig>(json.ToString(), settings) ?? new LogisticsConfig();
                 }
                 else
                 {
+                    Cfg = new LogisticsConfig();
                     Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath));
                     File.WriteAllText(ConfigPath, JsonConvert.SerializeObject(Cfg, Formatting.Indented));
                     DebugMsg("Logistics: wrote default config " + ConfigPath);
@@ -171,8 +175,9 @@ namespace Si_Logistics
             Cfg.ScoreTransfer = Math.Max(0, Math.Min(100, Cfg.ScoreTransfer));
             if (!Cfg.LogisticsScore) ScoreRewards.Clear();
             ValidateCommanderScoreConfig();
-            Cfg.PersonalBonus.Share = ValidRewardShare(Cfg.PersonalBonus.Share, 0.10f);
-            Cfg.PersonalBonus.TransferShare = ValidRewardShare(Cfg.PersonalBonus.TransferShare, 0.08f);
+            Cfg.PersonalBonus.HarvesterShare = ValidRewardShare(Cfg.PersonalBonus.HarvesterShare, 0.07f);
+            Cfg.PersonalBonus.TransportShare = ValidRewardShare(Cfg.PersonalBonus.TransportShare, 0.09f);
+            Cfg.PersonalBonus.TransferShare = ValidRewardShare(Cfg.PersonalBonus.TransferShare, 0.06f);
             if (float.IsNaN(Cfg.DeliveryCooldownSeconds) || float.IsInfinity(Cfg.DeliveryCooldownSeconds) || Cfg.DeliveryCooldownSeconds < 0)
                 Cfg.DeliveryCooldownSeconds = 20f;
             var unique = new List<string>();
@@ -196,8 +201,8 @@ namespace Si_Logistics
         }
 
         private static string RewardSettings() =>
-            "transport " + Cfg.PersonalBonus.Share.ToString("P1", CultureInfo.InvariantCulture) +
-            ", harvester refinery " + Cfg.PersonalBonus.Share.ToString("P1", CultureInfo.InvariantCulture) +
+            "transport " + Cfg.PersonalBonus.TransportShare.ToString("P1", CultureInfo.InvariantCulture) +
+            ", harvester refinery " + Cfg.PersonalBonus.HarvesterShare.ToString("P1", CultureInfo.InvariantCulture) +
             ", harvester transfer " + Cfg.PersonalBonus.TransferShare.ToString("P1", CultureInfo.InvariantCulture) +
             ", payout " + Cfg.DeliveryCooldownSeconds.ToString("0.##", CultureInfo.InvariantCulture) + "s";
 
@@ -221,9 +226,9 @@ namespace Si_Logistics
             // Fixed public surface: both names always expose exactly the same commands.
             HelperMethods.RegisterPlayerCommand("logistics", OnLogisticsCommand, Cfg.Commands.HideFromChat);
             HelperMethods.RegisterPlayerCommand("logi", OnLogisticsCommand, Cfg.Commands.HideFromChat);
-            HelperMethods.RegisterPlayerCommand("logisticsscore", OnScoreCommand, Cfg.Commands.HideFromChat);
-            HelperMethods.RegisterPlayerCommand("scoreunload", OnScoreCommand, Cfg.Commands.HideFromChat);
-            HelperMethods.RegisterPlayerCommand("scoretransfer", OnScoreCommand, Cfg.Commands.HideFromChat);
+            HelperMethods.RegisterAdminCommand("logisticsscore", OnScoreCommand, Power.Generic, "Enable or disable player logistics scoring: on|off.");
+            HelperMethods.RegisterAdminCommand("scoreunload", OnScoreCommand, Power.Generic, "Delivery points per 100 Balterium: 0..100.");
+            HelperMethods.RegisterAdminCommand("scoretransfer", OnScoreCommand, Power.Generic, "Pickup points per 100 Balterium: 0..100.");
             HelperMethods.RegisterAdminCommand("logisticsscorecomander", OnCommanderScoreCommand, Power.Generic, "Enable or disable commander logistics scoring: on|off.");
             HelperMethods.RegisterAdminCommand("logisticsscorecommander", OnCommanderScoreCommand, Power.Generic, "Enable or disable commander logistics scoring: on|off.");
         }
@@ -273,14 +278,16 @@ namespace Si_Logistics
                         if (!Cfg.Enabled) ReleaseLogisticsControl();
                         SaveConfig();
                         Reply(caller, "Logistics " + (Cfg.Enabled ? "enabled." : "disabled.")); break;
-                    case "share":
+                    case "harvestershare":
+                    case "transportshare":
                     case "transfershare":
                         if (!TryParseFloat(a1, out float share) || share < 0f || share > 1f)
                         { Reply(caller, "Usage: " + sub + " <0..1>"); return; }
-                        if (sub == "share") Cfg.PersonalBonus.Share = share;
+                        if (sub == "harvestershare") Cfg.PersonalBonus.HarvesterShare = share;
+                        else if (sub == "transportshare") Cfg.PersonalBonus.TransportShare = share;
                         else Cfg.PersonalBonus.TransferShare = share;
                         SaveConfig();
-                        Reply(caller, (sub == "share" ? "Transport and harvester refinery reward" : "Harvester-to-transport pickup reward") +
+                        Reply(caller, (sub == "harvestershare" ? "Harvester refinery reward" : sub == "transportshare" ? "Transport refinery reward" : "Harvester-to-transport pickup reward") +
                             " = " + share.ToString("P1", CultureInfo.InvariantCulture) + "."); break;
                     case "harvesterfix":
                     case "aitransport":
@@ -297,17 +304,40 @@ namespace Si_Logistics
                         }
                         SaveConfig();
                         Reply(caller, sub + " " + a1.ToUpperInvariant() + (Cfg.Enabled ? "." : " (master Logistics is OFF).")); break;
+                    case "sounds":
+                    case "announce":
+                        if (a1 != "on" && a1 != "off") { Reply(caller, "Usage: /logistics " + sub + " on|off"); return; }
+                        if (sub == "sounds") Cfg.Sounds.Enabled = a1 == "on";
+                        else Cfg.PersonalBonus.AnnounceToPlayer = a1 == "on";
+                        SaveConfig(); Reply(caller, sub + " " + a1.ToUpperInvariant() + "."); break;
+                    case "progress":
+                        if (!TryParseFloat(a1, out float progress) || progress < 0f || progress > 60f)
+                        { Reply(caller, "Usage: /logistics progress <0..60 seconds; 0 = start/stop only>"); return; }
+                        Cfg.Chat.ProgressIntervalSeconds = progress;
+                        SaveConfig(); Reply(caller, "Progress interval = " + progress.ToString(CultureInfo.InvariantCulture) + " seconds."); break;
                     case "capacity":
                         if (!int.TryParse(a2, out int capacity) || capacity <= 0 || (a1 != "air" && a1 != "ground")) { Reply(caller, "Usage: capacity air|ground <n>"); return; }
                         if (a1 == "air") Cfg.AirCargoCapacity = capacity; else Cfg.GroundCargoCapacity = capacity;
                         SaveConfig(); Reply(caller, a1 + " capacity = " + capacity + "."); break;
                     case "rate":
-                        if (!int.TryParse(a2, out int rate) || rate <= 0 || (a1 != "load" && a1 != "unload")) { Reply(caller, "Usage: rate load|unload <units per second>"); return; }
-                        if (a1 == "load") Cfg.LoadUnitsPerSecond = rate; else Cfg.UnloadUnitsPerSecond = rate;
+                        if (!int.TryParse(a2, out int rate) || rate <= 0 || (a1 != "load" && a1 != "unload" && a1 != "airload" && a1 != "airunload")) { Reply(caller, "Usage: rate load|unload|airload|airunload <units per second>"); return; }
+                        if (a1 == "load") Cfg.LoadUnitsPerSecond = rate;
+                        else if (a1 == "unload") Cfg.UnloadUnitsPerSecond = rate;
+                        else if (a1 == "airload") Cfg.AirLoadUnitsPerSecond = rate;
+                        else Cfg.AirUnloadUnitsPerSecond = rate;
                         SaveConfig(); Reply(caller, a1 + " rate = " + rate + "/s."); break;
                     case "radius":
-                        if (!TryParseFloat(a2, out float radius) || radius <= 0f || (a1 != "load" && a1 != "unload")) { Reply(caller, "Usage: radius load|unload <metres>"); return; }
-                        if (a1 == "load") Cfg.LoadRadius = radius; else Cfg.UnloadRadius = radius;
+                        if (!TryParseFloat(a2, out float radius) || radius <= 0f ||
+                            (a1 != "load" && a1 != "unload" && a1 != "aiairload" && a1 != "aiairunload" && a1 != "aigroundload" && a1 != "aigroundunload"))
+                        { Reply(caller, "Usage: radius load|unload|aiairload|aiairunload|aigroundload|aigroundunload <metres>"); return; }
+                        if (a1.StartsWith("ai", StringComparison.Ordinal) && (radius < 1f || radius > 2000f))
+                        { Reply(caller, "AI radii must be between 1 and 2000 metres."); return; }
+                        if (a1 == "load") Cfg.LoadRadius = radius;
+                        else if (a1 == "unload") Cfg.UnloadRadius = radius;
+                        else if (a1 == "aiairload") Cfg.AITransport.AirLoadRadius = radius;
+                        else if (a1 == "aiairunload") Cfg.AITransport.AirUnloadRadius = radius;
+                        else if (a1 == "aigroundload") Cfg.AITransport.GroundLoadRadius = radius;
+                        else Cfg.AITransport.GroundUnloadRadius = radius;
                         SaveConfig(); Reply(caller, a1 + " radius = " + radius.ToString("F0", CultureInfo.InvariantCulture) + " m."); break;
                     case "cooldown":
                         if (!TryParseFloat(a1, out float cooldown) || cooldown < 0f) { Reply(caller, "Usage: cooldown <seconds>"); return; }
@@ -352,8 +382,10 @@ namespace Si_Logistics
         private static void ShowHelp(Player caller)
         {
             Reply(caller, "/logistics or /logi: [status|help]. Status is available to everyone.");
-            Reply(caller, "Admin: on|off; share <0..1>; transfershare <0..1>; capacity air|ground <positive integer>.");
-            Reply(caller, "Admin: rate load|unload <positive integer> (ground); radius load|unload <metres> (player transfers).");
+            Reply(caller, "Admin: on|off; harvestershare <0..1>; transportshare <0..1>; transfershare <0..1>; capacity air|ground <positive integer>.");
+            Reply(caller, "Admin: rate load|unload|airload|airunload <positive integer>; radius load|unload <metres> (player transfers).");
+            Reply(caller, "Admin: radius aiairload|aiairunload|aigroundload|aigroundunload <1..2000 metres>.");
+            Reply(caller, "Admin: sounds on|off; announce on|off; progress <0..60 seconds; 0 = start/stop only>.");
             Reply(caller, "Admin: cooldown <seconds>; debug on|off; reload; harvesterfix on|off; aitransport on|off.");
             Reply(caller, "Admin: /logisticsscore on|off; /scoreunload <0..100>; /scoretransfer <0..100> (points per 100 Balterium).");
             Reply(caller, "Admin: /logisticsscorecomander on|off; edit CommanderScore.Rules in config, then /logistics reload.");
@@ -500,14 +532,20 @@ namespace Si_Logistics
         private static bool TryLoad(Unit transport, Cargo cargo, Unit assignedHarvester = null, float? loadRadius = null)
         {
             bool harvesterInRange = false;
+            bool useCache = assignedHarvester == null;
+            Unit cached = useCache ? cargo.LoadTarget : null;
+            if (useCache) cargo.LoadTarget = null;
+            float radius = loadRadius ?? Cfg.LoadRadius;
+            Vector3 position = transport.transform.position;
             int count = assignedHarvester ? 1 : TickHarvesters.Count;
-            for (int i = 0; i < count; i++)
+            for (int i = useCache ? -1 : 0; i < count; i++)
             {
-                Unit harvester = assignedHarvester ? assignedHarvester : TickHarvesters[i];
+                Unit harvester = i < 0 ? cached : assignedHarvester ? assignedHarvester : TickHarvesters[i];
+                if (i >= 0 && ReferenceEquals(harvester, cached)) continue;
                 if ((assignedHarvester != null && harvester != assignedHarvester) || harvester == null || harvester.ObjectInfo == null || harvester.ObjectInfo.UnitType != UnitType.Harvester ||
                     harvester.Team != transport.Team || harvester.DamageManager == null ||
                     harvester.DamageManager.IsDestroyed || !harvester.IsResourceHolder ||
-                    Vector3.Distance(harvester.transform.position, transport.transform.position) > (loadRadius ?? Cfg.LoadRadius)) continue;
+                    !InTransferRange(harvester.transform.position, position, radius)) continue;
 
                 harvesterInRange = true;
                 var resource = transport.Team.UsableResource;
@@ -531,6 +569,7 @@ namespace Si_Logistics
                 cargo.Amount += removed;
                 if (removed > 0)
                 {
+                    if (useCache) cargo.LoadTarget = harvester;
                     HarvesterTransportPickup(harvester);
                     if (transportDriver != null)
                     {
@@ -551,14 +590,21 @@ namespace Si_Logistics
 
         private static bool TryUnload(Unit transport, Cargo cargo, Structure assignedRefinery = null, float? unloadRadius = null)
         {
+            bool useCache = assignedRefinery == null;
+            Structure cached = useCache ? cargo.UnloadTarget : null;
+            if (useCache) cargo.UnloadTarget = null;
+            float radius = unloadRadius ?? Cfg.UnloadRadius;
+            Vector3 position = transport.transform.position;
             int count = assignedRefinery ? 1 : TickRefineries.Count;
-            for (int i = 0; i < count; i++)
+            for (int i = useCache ? -1 : 0; i < count; i++)
             {
-                Structure refinery = assignedRefinery ? assignedRefinery : TickRefineries[i];
+                Structure refinery = i < 0 ? cached : assignedRefinery ? assignedRefinery : TickRefineries[i];
+                if (i >= 0 && ReferenceEquals(refinery, cached)) continue;
                 if ((assignedRefinery != null && refinery != assignedRefinery) || refinery == null || refinery.Team != transport.Team ||
                     refinery.ResourceDepositPoints == null || refinery.ResourceDepositPoints.Count == 0 ||
                     refinery.DamageManager == null || refinery.DamageManager.IsDestroyed ||
-                    Vector3.Distance(refinery.transform.position, transport.transform.position) > (unloadRadius ?? Cfg.UnloadRadius)) continue;
+                    !InTransferRange(refinery.transform.position, position, radius)) continue;
+                if (useCache) cargo.UnloadTarget = refinery;
                 int attempted = Math.Min(Math.Min(cargo.Amount, Math.Max(1, transport.IsFlyingType ? Cfg.AirUnloadUnitsPerSecond : Cfg.UnloadUnitsPerSecond)),
                                          Math.Max(0, transport.Team.RemainingResourceCapacity));
                 if (attempted <= 0) return false;
@@ -588,6 +634,9 @@ namespace Si_Logistics
             }
             return false;
         }
+
+        private static bool InTransferRange(Vector3 target, Vector3 position, float radius) =>
+            radius >= 0f && (target - position).sqrMagnitude <= radius * radius;
 
         // Reflection bridge to Si_KingOfTheHill.KingOfTheHill.GrantExternalCredits(long,int,string) and
         // GetCreditsBySteamId(long); no compile-time dependency. KoH returns false while its /buy

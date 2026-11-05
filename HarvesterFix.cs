@@ -12,8 +12,8 @@ namespace Si_Logistics
     {
         public bool Enabled = true;
         public int MaximumReservationsPerRefinery = 5;
-        public float NearPatchDistanceMetres = 400f;
-        public float MediumPatchDistanceMetres = 800f;
+        public float NearPatchDistanceMetres = 800f;
+        public float MediumPatchDistanceMetres = 1500f;
         public int NearPatchReservations = 1;
         public int MediumPatchReservations = 2;
         public int FarPatchReservations = 3;
@@ -49,16 +49,9 @@ namespace Si_Logistics
         }
         private static readonly Dictionary<int, HarvestJob> HarvestJobs = new Dictionary<int, HarvestJob>();
         private static readonly Dictionary<int, RefineryLine> RefineryLines = new Dictionary<int, RefineryLine>();
-        private static readonly HashSet<int> NewHarvesters = new HashSet<int>();
         private static bool HarvestFixInstalled, HarvestOwnOrder;
         private static float NextHarvestScan;
         private static bool HarvestFixActive => HarvestFixInstalled && Cfg.Enabled && Cfg.HarvesterFix.Enabled && Game.GetIsServer() && MatchAcceptsRewards;
-
-        private static void BindHarvesterEvents()
-        {
-            GameEvents.OnUnitSpawned -= HarvesterSpawned;
-            GameEvents.OnUnitSpawned += HarvesterSpawned;
-        }
 
         private static float ValidHarvestSetting(float value, float fallback, float minimum, float maximum) =>
             float.IsNaN(value) || float.IsInfinity(value) ? fallback : Mathf.Clamp(value, minimum, maximum);
@@ -68,8 +61,8 @@ namespace Si_Logistics
             if (Cfg.HarvesterFix == null) Cfg.HarvesterFix = new HarvesterFixConfig();
             var c = Cfg.HarvesterFix;
             c.MaximumReservationsPerRefinery = Math.Max(1, Math.Min(32, c.MaximumReservationsPerRefinery));
-            c.NearPatchDistanceMetres = ValidHarvestSetting(c.NearPatchDistanceMetres, 400, 0, 100000);
-            c.MediumPatchDistanceMetres = ValidHarvestSetting(c.MediumPatchDistanceMetres, 800, c.NearPatchDistanceMetres, 100000);
+            c.NearPatchDistanceMetres = ValidHarvestSetting(c.NearPatchDistanceMetres, 800, 0, 100000);
+            c.MediumPatchDistanceMetres = ValidHarvestSetting(c.MediumPatchDistanceMetres, 1500, c.NearPatchDistanceMetres, 100000);
             c.NearPatchReservations = Math.Max(1, Math.Min(32, c.NearPatchReservations));
             c.MediumPatchReservations = Math.Max(1, Math.Min(32, c.MediumPatchReservations));
             c.FarPatchReservations = Math.Max(1, Math.Min(32, c.FarPatchReservations));
@@ -94,14 +87,7 @@ namespace Si_Logistics
             HarmonyInstance.Patch(AccessTools.Method(typeof(AIOrderProcessor), "IssueOrder"),
                 prefix: new HarmonyMethod(typeof(LogisticsMod), nameof(HarvestOrderPrefix)),
                 postfix: new HarmonyMethod(typeof(LogisticsMod), nameof(HarvestOrderPostfix)));
-            BindHarvesterEvents();
             HarvestFixInstalled = true;
-        }
-
-        private static void HarvesterSpawned(Unit unit)
-        {
-            if (HarvestFixActive && unit && unit.ObjectInfo && unit.ObjectInfo.UnitType == UnitType.Harvester)
-                NewHarvesters.Add(unit.GetInstanceID());
         }
 
         private static void ShowHarvesterStatus(Player caller)
@@ -165,15 +151,15 @@ namespace Si_Logistics
             if (!HarvestJobs.TryGetValue(id, out var j))
             {
                 j = new HarvestJob { Agent = a, Team = a.Team, Area = a.CurrentHarvestArea,
-                    ReadyAt = Time.time + 10f, Phase = HarvestPhase.Starting };
+                    ReadyAt = Time.time, Phase = HarvestPhase.Starting };
                 HarvestJobs.Add(id, j);
-                // Existing player orders are left alone when the feature is enabled.
+                // Native AI owns initial factory dispatch. Idle/new harvesters and
+                // existing non-harvest orders stay unmanaged until Harvest/Deposit.
                 var orders = a.Unit.OrderAgent.Orders;
-                bool newlyBuilt = NewHarvesters.Remove(id);
                 bool fullFallback = a.ResourceHolder.RemainingSpace == 0 && !a.IsFollowingPath && !a.IsCalculatingPath &&
                     orders.Count > 0 && orders[0] is AIMoveOrder move &&
                     Vector3.Distance(move.WorldPosition, a.transform.position) <= Math.Max(15f, a.Unit.PhysicalRadius);
-                if (!newlyBuilt && !fullFallback && orders.Count > 0 && !(orders[0] is AIHarvestOrder) && !(orders[0] is AIDepositOrder))
+                if (!fullFallback && (orders.Count == 0 || (!(orders[0] is AIHarvestOrder) && !(orders[0] is AIDepositOrder))))
                     j.Phase = HarvestPhase.Manual;
                 if (fullFallback) HarvestDiagnostic(j, "adopted full harvester in completed vanilla fallback move");
             }
@@ -226,7 +212,7 @@ namespace Si_Logistics
         {
             var jobs = new List<HarvestJob>(HarvestJobs.Values);
             foreach (var j in jobs) ReleaseHarvestReservations(j);
-            HarvestJobs.Clear(); RefineryLines.Clear(); NewHarvesters.Clear(); NextHarvestScan = 0;
+            HarvestJobs.Clear(); RefineryLines.Clear(); NextHarvestScan = 0;
             if (!resumeVanilla || !Game.GetIsServer()) return;
             // Only replace orders that were owned by our controller. Docking remains native.
             foreach (var j in jobs)

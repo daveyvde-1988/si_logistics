@@ -26,8 +26,8 @@ namespace Si_Logistics
         private static long SteamId(Player player) => player == null ? 0 : (long)player.PlayerID.m_ID;
         private static bool Connected(Player player, long id) => player != null && id != 0 &&
             Player.Players != null && Player.Players.Contains(player) && SteamId(player) == id;
-        private static decimal RewardRate => (decimal)Cfg.PersonalBonus.Share;
-        private static decimal HarvesterDepositRate => RewardRate;
+        private static decimal RewardRate => (decimal)Cfg.PersonalBonus.TransportShare;
+        private static decimal HarvesterDepositRate => (decimal)Cfg.PersonalBonus.HarvesterShare;
         private static decimal HarvesterTransferRate => (decimal)Cfg.PersonalBonus.TransferShare;
 
         private static void QueueReward(Player driver, int amount, decimal rate, int epoch)
@@ -82,7 +82,6 @@ namespace Si_Logistics
 
         private static void BindRewardEvents()
         {
-            BindHarvesterEvents();
             BindCommanderScoreEvents();
             GameEvents.OnGameStarted -= LogisticsMatchStarted; GameEvents.OnGameStarted += LogisticsMatchStarted;
             GameEvents.OnGameEnded -= LogisticsMatchEnded; GameEvents.OnGameEnded += LogisticsMatchEnded;
@@ -108,11 +107,13 @@ namespace Si_Logistics
             UnbindCommanderScoreEvents();
             ResetAITransports(true);
             ResetHarvesterFix(true);
-            GameEvents.OnUnitSpawned -= HarvesterSpawned;
             ResetCommanderScore(); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); ScoreRewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear();
             GameEvents.OnGameStarted -= LogisticsMatchStarted;
             GameEvents.OnGameEnded -= LogisticsMatchEnded;
             GameEvents.OnPlayerLeft -= LogisticsPlayerLeft;
+            HelperMethods.UnregisterAdminCommand("logisticsscore");
+            HelperMethods.UnregisterAdminCommand("scoreunload");
+            HelperMethods.UnregisterAdminCommand("scoretransfer");
             HelperMethods.UnregisterAdminCommand("logisticsscorecomander");
             HelperMethods.UnregisterAdminCommand("logisticsscorecommander");
             HarmonyInstance.UnpatchSelf();

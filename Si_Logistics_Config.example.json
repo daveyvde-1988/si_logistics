@@ -97,26 +97,46 @@
       }
     ]
   },
+  "AItransport": {
+    "Enabled": true,
+    "airloadradius": 90.0,
+    "airunloadradius": 120.0,
+    "groundloadradius": 75.0,
+    "groundunloadradius": 80.0,
+    "NearHarvesterDistanceMetres": 400.0,
+    "MediumHarvesterDistanceMetres": 800.0,
+    "NearGroundTransports": 2,
+    "NearAirTransports": 1,
+    "MediumGroundTransports": 3,
+    "MediumAirTransports": 1,
+    "FarGroundTransports": 4,
+    "FarAirTransports": 2,
+    "ReassignmentCheckSeconds": 10.0,
+    "NoProgressTimeoutSeconds": 120.0
+  },
   "TransportUnits": [
     "Shuttle",
     "Dropship",
     "Squad Transport",
     "Platoon Hauler"
   ],
-  "AirCargoCapacity": 9000,
-  "GroundCargoCapacity": 3000,
+  "AirCargoCapacity": 5000,
+  "GroundCargoCapacity": 3500,
+  "airloadunitspersecond": 500,
+  "airunloadunitspersecond": 500,
   "LoadUnitsPerSecond": 300,
   "UnloadUnitsPerSecond": 300,
-  "LoadRadius": 40,
-  "UnloadRadius": 65,
-  "DeliveryCooldownSeconds": 20,
+  "LoadRadius": 45.0,
+  "UnloadRadius": 70.0,
+  "DeliveryCooldownSeconds": 20.0,
   "PersonalBonus": {
-    "Share": 0.1,
-    "TransferShare": 0.08,
+    "HarvesterShare": 0.07,
+    "TransportShare": 0.09,
+    "TransferShare": 0.06,
     "AnnounceToPlayer": true
   },
   "Chat": {
-    "ProgressIntervalSeconds": 3,
+    "ProgressIntervalSeconds": 2.0,
     "ProgressBarLength": 10,
     "BarFilled": "#",
     "BarEmpty": "-"
@@ -132,33 +152,13 @@
   "harvesterfix": {
     "Enabled": true,
     "MaximumReservationsPerRefinery": 5,
-    "NearPatchDistanceMetres": 400,
-    "MediumPatchDistanceMetres": 800,
+    "NearPatchDistanceMetres": 800.0,
+    "MediumPatchDistanceMetres": 1500.0,
     "NearPatchReservations": 1,
     "MediumPatchReservations": 2,
     "FarPatchReservations": 3,
-    "TransferWaitingTimeSeconds": 120,
-    "ReservationCheckTimeSeconds": 10,
-    "ReservationDistanceIncrementMetres": 50
-  },
-  "AItransport": {
-    "Enabled": true,
-    "NearHarvesterDistanceMetres": 300,
-    "MediumHarvesterDistanceMetres": 600,
-    "NearGroundTransports": 2,
-    "NearAirTransports": 1,
-    "MediumGroundTransports": 3,
-    "MediumAirTransports": 1,
-    "FarGroundTransports": 4,
-    "FarAirTransports": 2,
-    "ReassignmentCheckSeconds": 10,
-    "NoProgressTimeoutSeconds": 120,
-    "Enabled": false,
-    "airloadradius": 150,
-    "airunloadradius": 150,
-    "groundloadradius": 40,
-    "groundunloadradius": 65
-  },
-  "airloadunitspersecond": 500,
-  "airunloadunitspersecond": 500
+    "TransferWaitingTimeSeconds": 120.0,
+    "ReservationCheckTimeSeconds": 10.0,
+    "ReservationDistanceIncrementMetres": 50.0
+  }
 }

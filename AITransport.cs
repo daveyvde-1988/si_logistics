@@ -12,12 +12,12 @@ namespace Si_Logistics
     public sealed class AITransportConfig
     {
         public bool Enabled = true;
-        [JsonProperty("airloadradius")] public float AirLoadRadius = 150f;
-        [JsonProperty("airunloadradius")] public float AirUnloadRadius = 150f;
-        [JsonProperty("groundloadradius")] public float GroundLoadRadius = 40f;
-        [JsonProperty("groundunloadradius")] public float GroundUnloadRadius = 65f;
-        public float NearHarvesterDistanceMetres = 300f;
-        public float MediumHarvesterDistanceMetres = 600f;
+        [JsonProperty("airloadradius")] public float AirLoadRadius = 90f;
+        [JsonProperty("airunloadradius")] public float AirUnloadRadius = 120f;
+        [JsonProperty("groundloadradius")] public float GroundLoadRadius = 75f;
+        [JsonProperty("groundunloadradius")] public float GroundUnloadRadius = 80f;
+        public float NearHarvesterDistanceMetres = 400f;
+        public float MediumHarvesterDistanceMetres = 800f;
         public int NearGroundTransports = 2, NearAirTransports = 1;
         public int MediumGroundTransports = 3, MediumAirTransports = 1;
         public int FarGroundTransports = 4, FarAirTransports = 2;
@@ -205,7 +205,7 @@ namespace Si_Logistics
                 }
                 if (!j.Refinery)
                 { AIHold(j); SetTransfer(u, cargo, null); AILog(j, "waiting for a reachable friendly refinery"); return true; }
-                if (Vector3.Distance(u.transform.position, j.Refinery.transform.position) <= AIUnloadRadius(u))
+                if (InTransferRange(j.Refinery.transform.position, u.transform.position, AIUnloadRadius(u)))
                 {
                     AIHold(j);
                     if (Time.unscaledTime >= cargo.CooldownUntil && TryUnload(u, cargo, j.Refinery, AIUnloadRadius(u)))
@@ -216,7 +216,7 @@ namespace Si_Logistics
             }
             else if (j.Harvester)
             {
-                if (Vector3.Distance(u.transform.position, j.Harvester.transform.position) <= AILoadRadius(u))
+                if (InTransferRange(j.Harvester.transform.position, u.transform.position, AILoadRadius(u)))
                 {
                     AIHold(j);
                     if (Time.unscaledTime >= cargo.CooldownUntil)

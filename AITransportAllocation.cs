@@ -11,12 +11,12 @@ namespace Si_Logistics
         private static void ValidateAITransportConfig()
         {
             var c = Cfg.AITransport;
-            c.AirLoadRadius = ValidHarvestSetting(c.AirLoadRadius, 150, 1, 2000);
-            c.AirUnloadRadius = ValidHarvestSetting(c.AirUnloadRadius, 150, 1, 2000);
-            c.GroundLoadRadius = ValidHarvestSetting(c.GroundLoadRadius, 40, 1, 2000);
-            c.GroundUnloadRadius = ValidHarvestSetting(c.GroundUnloadRadius, 65, 1, 2000);
-            c.NearHarvesterDistanceMetres = ValidHarvestSetting(c.NearHarvesterDistanceMetres, 300, 0, 100000);
-            c.MediumHarvesterDistanceMetres = ValidHarvestSetting(c.MediumHarvesterDistanceMetres, 600, c.NearHarvesterDistanceMetres, 100000);
+            c.AirLoadRadius = ValidHarvestSetting(c.AirLoadRadius, 90, 1, 2000);
+            c.AirUnloadRadius = ValidHarvestSetting(c.AirUnloadRadius, 120, 1, 2000);
+            c.GroundLoadRadius = ValidHarvestSetting(c.GroundLoadRadius, 75, 1, 2000);
+            c.GroundUnloadRadius = ValidHarvestSetting(c.GroundUnloadRadius, 80, 1, 2000);
+            c.NearHarvesterDistanceMetres = ValidHarvestSetting(c.NearHarvesterDistanceMetres, 400, 0, 100000);
+            c.MediumHarvesterDistanceMetres = ValidHarvestSetting(c.MediumHarvesterDistanceMetres, 800, c.NearHarvesterDistanceMetres, 100000);
             c.NearGroundTransports = Math.Max(0, Math.Min(32, c.NearGroundTransports));
             c.MediumGroundTransports = Math.Max(0, Math.Min(32, c.MediumGroundTransports));
             c.FarGroundTransports = Math.Max(0, Math.Min(32, c.FarGroundTransports));

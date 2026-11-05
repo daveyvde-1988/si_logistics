@@ -1,5 +1,34 @@
 # Si_Logistics (0.8.1)
 
+## Current defaults and ClientModUI controls
+
+Code defaults and Si_Logistics_Config.example.json now match the user's current
+configuration from 5 November 2026: air/ground capacity 5000/3500, air rates 500/s,
+ground rates 300/s, player ranges 45/70m, AI air ranges 90/120m and ground ranges
+75/80m. Personal shares are HarvesterShare 0.07, TransportShare 0.09 and TransferShare
+0.06. AI allocation distance bands are 400/800m; harvester patch bands 800/1500m.
+Progress interval is 2 seconds. Existing configuration values still take priority.
+The example JSON is the complete default reference; older historical notes below
+may describe previous tuning.
+
+Missing configs are written from a fresh LogisticsConfig instance, including
+after deletion during a running session. Existing legacy-config migration remains.
+The ClientModUI name comes from the companion's menu override when present;
+the local ModUI and Si_ServerModUI menu overrides now both name it Logistics.
+
+The existing schema-2 ModUIData provider supplies the ClientModUI server control
+panel through the compatible server companion. Status/help/reload are buttons;
+master, automation, score, sound, announcement and debug switches use toggles.
+Capacity, reward shares, score rates, ground/air transfer rates, player/AI ranges,
+cooldown and progress interval use sliders with SET buttons. All setting changes
+require Admin Mod Generic permission and save through the same server handlers.
+New syntax: /logistics rate airload|airunload <positive integer>;
+/logistics radius aiairload|aiairunload|aigroundload|aigroundunload <1..2000>;
+/logistics sounds on|off; /logistics announce on|off;
+/logistics progress <0..60 seconds> (zero = start/stop messages only).
+Complex commander rules, transport type lists and reservation/allocation tuning
+remain JSON settings. No ClientModUI binary or protocol changes are needed.
+
 Move Balterium from harvesters to transports and refineries, reward the drivers,
 and keep the team's supply runs moving. Runs on the dedicated server with
 MelonLoader and Admin Mod; players do not need a client mod.
@@ -24,8 +53,9 @@ Successful setting changes save to UserData/cfg/Logistics/Si_Logistics_Config.js
 | `/logistics` or `/logistics status` | Everyone | Settings, effective feature states, reward rates and cargo in your controlled transport. |
 | `/logistics help` | Everyone | List available commands. |
 | `/logistics on/off` | Admin | Master switch for transfers, rewards, Harvesterfix and AItransport; alias `/logistics enabled on/off`. |
-| `/logistics share <0–1>` | Admin | Transport unloading AND independent harvester refinery reward rate; default 0.10. |
-| `/logistics transfershare <0–1>` | Admin | Harvester driver's reward for a harvester-to-transport pickup; default 0.08. |
+| `/logistics harvestershare <0-1>` | Admin | Harvester refinery reward rate; default 0.07. |
+| `/logistics transportshare <0-1>` | Admin | Transport refinery reward rate; default 0.09. |
+| `/logistics transfershare <0–1>` | Admin | Harvester driver's reward for a harvester-to-transport pickup; default 0.06. |
 | `/logistics capacity air <n>` | Admin | Aircraft cargo capacity; positive integer. |
 | `/logistics capacity ground <n>` | Admin | Ground transport cargo capacity; positive integer. |
 | `/logistics rate load <n>` | Admin | Ground loading units per second; positive integer. |
@@ -143,13 +173,11 @@ Re-enabling resumes eligible harvesting and pending payouts, but transports need
 a fresh Follow assignment because disabling releases their duty. Match cleanup
 still clears temporary cargo/rewards as before.
 
-Rewards are always enabled under the master switch. PersonalBonus.Share is the
-single rate for transport deliveries and independently driven harvester refinery
-deliveries. PersonalBonus.TransferShare is the separate pickup reward; it retains
-the existing harvester-driver recipient and player-driven transfer eligibility.
-The Transfershare description in the requested command table duplicated unloading;
-this command controls the distinct harvester-to-transport reward, not a second
-unloading rate. Both reward types use DeliveryCooldownSeconds for payout batching.
+Rewards are always enabled under the master switch. PersonalBonus.HarvesterShare
+(default 0.07) rewards player-driven harvester refinery deliveries, while
+PersonalBonus.TransportShare (default 0.09) rewards transport deliveries.
+PersonalBonus.TransferShare (default 0.06) separately rewards the harvester driver
+for eligible player-driven pickups. All use DeliveryCooldownSeconds for batching.
 Changing a rate affects newly earned rewards; changing cooldown affects new
 reward windows and new delivery cooldowns, not timers already scheduled.
 Zero means payout on the next update; unavailable reward-provider retries have a
@@ -157,17 +185,16 @@ minimum one-second interval. Rewards still require the existing KoH credit API.
 
 Old PersonalBonus.Enabled, HarvesterDepositShare, PayoutDelaySeconds and MinBatch
 keys are removed/ignored. Legacy HarvesterTransferShare migrates to TransferShare
-when the new key is absent. Share and cooldown are now the source of truth.
+when the new key is absent. The old combined Share key is ignored; missing split
+shares use their new defaults. Explicit existing TransferShare values are preserved.
 Other tuned settings are preserved, including feature flags already present in
 an existing CFG; the ON/OFF defaults above apply to new/missing settings.
 
 ## CFG-only settings and preserved functions
 
-The existing per-class settings remain available in JSON: airloadunitspersecond
-and airunloadunitspersecond (500/s defaults, AI and player aircraft), and the four
-AItransport ground/air load/unload radii. Thus the rate commands change ground
-rates; radius commands change player ranges. This preserves separate air and AI
-settings introduced in 0.7.0. /logistics reload applies edited JSON values.
+Ground and air transfer rates and player/AI ranges are available through JSON,
+commands and the ClientModUI controls described above. /logistics reload applies
+edited JSON values.
 
 Other retained options support the mod's behaviour: allowed transport types,
 progress chat, optional sounds, reward announcements, hidden command chat,
@@ -222,9 +249,12 @@ Config: `UserData/cfg/Logistics/Si_Logistics_Config.json`:
 }
 ```
 
-Newly spawned harvesters get a 10-second grace period, and factory force-movement
-is allowed to finish before dispatch. They select a known, non-depleted resource
-patch with an available reservation. Reservations are per team and per resource
+Initial factory departure and harvesting orders belong to native AI. Logistics
+no longer tracks spawns or dispatches idle/new harvesters after a startup delay.
+It adopts harvesting/deposit work once native AI or a player requests it; existing
+manual orders remain unmanaged. There was no separate factory-dispatch command;
+/logistics harvesterfix remains for patch reservations and refinery queues.
+Managed harvesters select a non-depleted resource patch with an available reservation. Reservations are per team and per resource
 area, not per resource cell. Each assignment is a persistent home patch: the slot
 stays reserved through mining, transport top-ups, travel to the refinery, queuing,
 unloading, and the return trip. Changing refineries does not change the home patch.
@@ -320,7 +350,7 @@ the server's `Mods` directory while the server is stopped. It loads at next star
 Compilation does not establish in-game behaviour.
 
 1. Confirm harvesterfix defaults ON; disable it and verify vanilla harvesting, then re-enable.
-2. Build multiple harvesters: check factory exit, 10-second delay, distinct travel
+2. Build multiple harvesters: check native factory exit/initial harvest orders, distinct travel
    reservations with the 1/2/3 distance bands. Confirm the same home patch stays
    reserved while its owner unloads and is selected again on its return.
 3. Send at least six full harvesters towards one refinery: check the active bay,
@@ -458,6 +488,18 @@ Assignments/cargo are not saved across matches or server restarts.
 
 ## Performance and cleanup (0.8.1)
 
+- Player transports try their cached harvester/refinery first on each one-second
+  transfer tick. Team, destruction, resource-holder/deposit capability and current
+  range are rechecked before use. Empty harvesters lose their preference; the
+  same tick searches the shared list for another source. Other invalid targets
+  likewise fall back to the existing list order, without a nearest-target search.
+  When two eligible targets overlap, the cached target keeps priority until it
+  becomes unsuitable. AI duty continues using its assigned target exclusively.
+  Caches live with temporary cargo state and are cleared by existing cargo cleanup.
+- Player and AI transfer range gates use squared 3D distances. Transfer frequency,
+  capacities, accounting, reward rules and cooldowns are unchanged. Live CPU gains
+  remain unmeasured; compare the existing debug transfer-tick timings under load.
+
 - A synchronous transfer tick builds reusable lists of harvesters, transports and
   deposit structures once. Allocation scans use those lists; direct assigned
   transfers inspect only the assigned target. Live team, destruction, cargo,
@@ -505,3 +547,9 @@ ModUIData.cs and ModUI_Export.cs describe the current server commands/settings f
 Configuration now lives in `UserData/cfg/Logistics/Si_Logistics_Config.json`. Startup and `/logistics reload` import the legacy `UserData/Logistics_cfg/Si_Logistics_Config.json` only if the new file is missing. Existing destination settings take precedence; all saves use the new path.
 
 </details>
+
+The player score settings are registered as Admin Mod admin commands, matching
+their Generic permission checks and ModUI admin controls. Registering those exact
+roots as player commands caused ServerModUI to drop their admin metadata entries.
+Reward earning method signatures and KoH calls are unchanged; Ranks pins Logistics
+by DLL hash, so its reward adapter still requires a separate reviewed pin update.
