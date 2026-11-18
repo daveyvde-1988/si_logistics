@@ -19,6 +19,7 @@
     <Compile Include="AITransport.cs" />
     <Compile Include="AITransportAllocation.cs" />
     <Compile Include="WaspHarvest.cs" />
+    <Compile Include="WaspHarvestAI.cs" />
     <Compile Include="WaspHarvestInjector.cs" />
     <Compile Include="WaspHarvestPatches.cs" />
     <Compile Include="WaspHarvestCommands.cs" />

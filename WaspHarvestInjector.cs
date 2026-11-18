@@ -25,7 +25,8 @@ namespace Si_Logistics
         {
             if (!WaspHarvestActive || !Game.GetIsServer()) return;
             var creature = unit as CreatureDecapod;   // MiningClaws needs a CreatureDecapod on the same object
-            if (creature == null || unit.ObjectInfo == null) return;
+            if (creature == null || unit.ObjectInfo == null || unit.IsDestroyed ||
+                WaspByUnit.ContainsKey(unit.GetInstanceID())) return;
             string name = unit.ObjectInfo.DisplayName ?? string.Empty;
             bool match = false;   // plain loop: this runs on every unit spawn, no closure allocation
             var units = Cfg.WaspHarvest.Units;
@@ -50,44 +51,61 @@ namespace Si_Logistics
                 return;
             }
 
-            // 1) cargo first: MiningClaws.OnEnable caches GetComponent<ResourceHolder>()
-            var holder = go.AddComponent<ResourceHolder>();
-            holder.ResourceType = biotics;
-            holder.MaxAmount = Cfg.WaspHarvest.MaxCarry;
-            if (!unit.ResourceHolders.Contains(holder)) unit.ResourceHolders.Add(holder);
-
-            // 2) claws: OnEnable subscribes to the primary attack and registers the ordered updates
-            var claws = go.AddComponent<MiningClaws>();
-            claws.ExtractOnPrimaryAttack = true;
-            ApplyWaspNumbers(claws, holder);
-            if (claws.Creature == null || claws.ResourceHolder != holder)
-                WaspWarn("bind", "Wasp harvest: '" + name + "' claws did not bind on AddComponent (object active=" + go.activeInHierarchy + "); they bind when it is enabled.");
-
-            RegisterWasp(new WaspState
+            ResourceHolder holder = null;
+            MiningClaws claws = null;
+            try
             {
-                Unit = unit, Claws = claws, Holder = holder,
-                ClawsId = claws.GetInstanceID(), HolderId = holder.GetInstanceID(), UnitId = unit.GetInstanceID(),
-            });
+                // The claws bind directly to the component. Omitting it from Unit.ResourceHolders
+                // preserves the Wasp's vanilla classification for FPS commands and other mods.
+                holder = go.AddComponent<ResourceHolder>();
+                holder.ResourceType = biotics;
+                claws = go.AddComponent<MiningClaws>();
+                claws.ExtractOnPrimaryAttack = true;
+                ApplyWaspNumbers(claws, holder);
+                RegisterWasp(new WaspState
+                {
+                    Unit = creature, Claws = claws, Holder = holder,
+                    ClawsId = claws.GetInstanceID(), UnitId = unit.GetInstanceID()
+                });
+            }
+            catch
+            {
+                DestroyWaspComponents(claws, holder);
+                throw;
+            }
         }
 
         private static void ApplyWaspNumbers(MiningClaws claws, ResourceHolder holder)
         {
             var c = Cfg.WaspHarvest;
-            holder.MaxAmount = Math.Max(1, c.MaxCarry);
+            holder.MaxAmount = Math.Max(c.MaxCarry, holder.AmountStored);
             claws.ExtractionRadius = c.ExtractionRadius;
             claws.Tick = c.TickSeconds;
             claws.ExtractAmount = c.ExtractPerHit;
             claws.DepositAmount = c.DepositAmount;
         }
 
-        // After a settings change: units equipped earlier get the new numbers too.
         private static void ApplyWaspConfigToLive()
         {
+            if (!WaspHarvestInstalled || !Game.GetIsServer()) return;
+            bool active = WaspHarvestActive;
+            if (!active) CancelAllWaspJobs();
             foreach (var state in WaspByClaws.Values)
             {
-                try { if (state.Alive) ApplyWaspNumbers(state.Claws, state.Holder); }
+                try
+                {
+                    if (!state.Alive) continue;
+                    ApplyWaspNumbers(state.Claws, state.Holder);
+                    if (state.Claws.enabled == active) continue;
+                    if (active && state.VisitOpen) state.LastDeposit = Time.time;
+                    state.Claws.enabled = active;
+                }
                 catch (Exception error) { WaspWarn("apply", "Wasp harvest: applying settings to a live unit failed: " + error.Message); }
             }
+            if (!active) return;
+            ResumeWaspRewards();
+            if (Unit.Units != null)
+                foreach (var unit in Unit.Units) WaspSpawnPostfix(unit);
         }
 
         // Removes the added components from units that still exist (OnDisable unsubscribes the attack hooks).
@@ -97,12 +115,20 @@ namespace Si_Logistics
             {
                 try
                 {
-                    if (state.Unit && state.Holder) state.Unit.ResourceHolders.Remove(state.Holder);
-                    if (state.Claws) UnityEngine.Object.Destroy(state.Claws);
-                    if (state.Holder) UnityEngine.Object.Destroy(state.Holder);
+                    DestroyWaspComponents(state.Claws, state.Holder);
                 }
                 catch (Exception error) { WaspWarn("strip", "Wasp harvest: removing claws failed: " + error.Message); }
             }
+        }
+
+        private static void DestroyWaspComponents(MiningClaws claws, ResourceHolder holder)
+        {
+            if (claws)
+            {
+                claws.enabled = false;
+                UnityEngine.Object.Destroy(claws);
+            }
+            if (holder) UnityEngine.Object.Destroy(holder);
         }
 
         // Biotics: the Shrimp prefab's cargo resource; else a Resource named like "Biotic"; else the alien

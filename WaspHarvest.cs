@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Reflection;
 using HarmonyLib;
 using SilicaAdminMod;
 using UnityEngine;
@@ -31,7 +32,7 @@ namespace Si_Logistics
     // at the hit point and deposit at a team ResourceDepositPoint (the Bio Cache) while the creature
     // holds still inside it. The same two components are added to every spawned Wasp instance on the
     // server (WaspHarvestInjector.cs) and gated with Harmony (WaspHarvestPatches.cs): extraction needs
-    // a controlling player and a hit point near the ground, and a Bio Cache accepts one load per cooldown.
+    // a controlling player or an assigned AI job near the ground, and a Bio Cache accepts one load per cooldown.
     //
     // Network safety: NetworkComponent.Awake registers an object's networked scripts once. Components
     // added to an instance afterwards are never registered, so no extra network data is produced and
@@ -41,22 +42,24 @@ namespace Si_Logistics
     {
         private sealed class WaspState
         {
-            internal Unit Unit;
+            internal CreatureDecapod Unit;
             internal MiningClaws Claws;
             internal ResourceHolder Holder;
-            internal int ClawsId, HolderId, UnitId;   // cached: removal never touches a destroyed object
+            internal int ClawsId, UnitId;   // cached: removal never touches a destroyed object
             internal float LastCargoNotice = float.NegativeInfinity;
             internal float LastHeightNotice = float.NegativeInfinity;
             internal float LastUnloadNotice = float.NegativeInfinity;
             internal float LastCooldownNotice = float.NegativeInfinity;
             internal bool FullNoticeSent;             // "cargo full" is told once per full load
-            // One Bio Cache visit = one batch: reported and rewarded once, when the deposit ticks stop.
+            // Keep one visit for the unload limit and chat. Accepted ticks are credited to their own pilot.
             internal int Pending;
+            internal int PendingPilotAmount;
+            internal decimal PendingPilotCredits;
+            internal int VisitCapacity;
             internal float LastDeposit;
             internal float VisitStart = float.NegativeInfinity;
             internal Player PendingPlayer;
             internal long PendingSteamId;
-            internal int PendingEpoch;
             internal bool VisitOpen => Pending > 0;
             internal bool Alive => Claws && Holder && Unit;
         }
@@ -69,16 +72,17 @@ namespace Si_Logistics
         }
 
         private static readonly Dictionary<int, WaspState> WaspByClaws = new Dictionary<int, WaspState>();
-        private static readonly Dictionary<int, WaspState> WaspByHolder = new Dictionary<int, WaspState>();
         private static readonly Dictionary<int, WaspState> WaspByUnit = new Dictionary<int, WaspState>();
         private static readonly List<WaspState> WaspOpenVisits = new List<WaspState>();
         private static readonly List<WaspState> WaspScratch = new List<WaspState>();
         private static readonly Dictionary<long, WaspTally> WaspTallies = new Dictionary<long, WaspTally>();   // this round
         private static readonly Dictionary<string, float> WaspWarned = new Dictionary<string, float>();
-        private static bool WaspHarvestInstalled, WaspStandaloneLoaded;
+        private static bool WaspHarvestInstalled;
+        private static volatile bool WaspStandaloneLoaded;
+        private static HarmonyLib.Harmony WaspHarmony;
         private static float WaspNextSweep;
 
-        private static bool WaspHarvestActive => WaspHarvestInstalled && Cfg.Enabled && Cfg.WaspHarvest.Enabled;
+        private static bool WaspHarvestActive => WaspHarvestInstalled && !WaspStandaloneLoaded && Cfg.Enabled && Cfg.WaspHarvest.Enabled;
 
         private static void ValidateWaspHarvestConfig()
         {
@@ -102,30 +106,59 @@ namespace Si_Logistics
         {
             try
             {
-                // The standalone Si_WaspHarvest mod adds the same components and owns /wasp: never run both.
+                AppDomain.CurrentDomain.AssemblyLoad += WaspAssemblyLoaded;
                 foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
-                    if (string.Equals(assembly.GetName().Name, "Si_WaspHarvest", StringComparison.OrdinalIgnoreCase)) WaspStandaloneLoaded = true;
+                    if (IsStandaloneWasp(assembly)) WaspStandaloneLoaded = true;
+                if (PlayerMethods.FindPlayerCommandFromString("wasp") != null) WaspStandaloneLoaded = true;
                 if (WaspStandaloneLoaded)
                 {
-                    DebugWarning("Wasp harvest: standalone Si_WaspHarvest.dll is loaded; the built-in Wasp harvest stays off. Remove the standalone DLL to use it.");
+                    MelonLoader.MelonLogger.Warning("Wasp harvest: the standalone mod or another /wasp owner is loaded. Integrated Wasp harvest is off.");
                     return;
                 }
+                WaspHarmony = new HarmonyLib.Harmony("Si_Logistics.WaspHarvest");
                 var spawned = AccessTools.DeclaredMethod(typeof(Unit), "OnPostInit");
                 var extract = AccessTools.DeclaredMethod(typeof(MiningClaws), "OnExtractAttackHit");
-                var retrieve = AccessTools.DeclaredMethod(typeof(ResourceHolder), "RetrieveResource", new[] { typeof(int) });
-                if (spawned == null || extract == null || retrieve == null)
-                    throw new MissingMethodException("Unit.OnPostInit, MiningClaws.OnExtractAttackHit or ResourceHolder.RetrieveResource(int) not found");
-                HarmonyInstance.Patch(spawned, postfix: new HarmonyMethod(typeof(LogisticsMod), nameof(WaspSpawnPostfix)));
-                HarmonyInstance.Patch(extract,
+                var melee = AccessTools.DeclaredMethod(typeof(CreatureAttack), nameof(CreatureAttack.ApplyDamage),
+                    new[] { typeof(Transform), typeof(Quaternion), typeof(Rigidbody), typeof(Rigidbody) });
+                if (spawned == null || extract == null || melee == null)
+                    throw new MissingMethodException("Wasp spawn, extract or melee method not found");
+                WaspHarmony.Patch(spawned, postfix: new HarmonyMethod(typeof(LogisticsMod), nameof(WaspSpawnPostfix)));
+                WaspHarmony.Patch(extract,
                     prefix: new HarmonyMethod(typeof(LogisticsMod), nameof(WaspExtractPrefix)),
                     postfix: new HarmonyMethod(typeof(LogisticsMod), nameof(WaspExtractPostfix)));
-                HarmonyInstance.Patch(retrieve,
-                    prefix: new HarmonyMethod(typeof(LogisticsMod), nameof(WaspRetrievePrefix)),
-                    postfix: new HarmonyMethod(typeof(LogisticsMod), nameof(WaspRetrievePostfix)));
+                WaspHarmony.Patch(melee, transpiler: new HarmonyMethod(typeof(LogisticsMod), nameof(ObserveWaspMelee)));
                 HelperMethods.RegisterPlayerCommand("wasp", OnWaspCommand, Cfg.Commands.HideFromChat);
+                Event_Damage.OnPrePlayerDamageReceived += WaspClientMelee;
                 WaspHarvestInstalled = true;
             }
-            catch (Exception error) { DebugError("Wasp harvest: install failed, feature inactive: " + error.Message); }
+            catch (Exception error)
+            {
+                WaspHarmony?.UnpatchSelf();
+                MelonLoader.MelonLogger.Error("Wasp harvest: install failed: " + error.GetBaseException().Message);
+                return;
+            }
+            InstallWaspOrders();
+            ApplyWaspConfigToLive();
+        }
+
+        private static bool IsStandaloneWasp(Assembly assembly) =>
+            string.Equals(assembly.GetName().Name, "Si_WaspHarvest", StringComparison.OrdinalIgnoreCase);
+
+        private static void WaspAssemblyLoaded(object sender, AssemblyLoadEventArgs args)
+        {
+            if (IsStandaloneWasp(args.LoadedAssembly)) WaspStandaloneLoaded = true;
+        }
+
+        private static void ReleaseWaspInstallation()
+        {
+            AppDomain.CurrentDomain.AssemblyLoad -= WaspAssemblyLoaded;
+            WaspHarvestInstalled = false;
+            WaspOrdersInstalled = false;
+            ResetWaspHarvest();
+            Event_Damage.OnPrePlayerDamageReceived -= WaspClientMelee;
+            PlayerMethods.PlayerCommands?.RemoveAll(command => command.PlayerCommandCallback == OnWaspCommand);
+            WaspOrderHarmony?.UnpatchSelf();
+            WaspHarmony?.UnpatchSelf();
         }
 
         private static void BindWaspHarvestEvents()
@@ -153,26 +186,23 @@ namespace Si_Logistics
                 PruneWasps();
                 foreach (var state in WaspByClaws.Values) state.VisitStart = float.NegativeInfinity;
                 WaspTallies.Clear();
+                ApplyWaspConfigToLive();
             }
             catch (Exception error) { WaspWarn("start", "Wasp harvest match start: " + error.Message); }
         }
 
         private static void WaspMatchEnded(GameMode mode, Team winner) => ResetWaspHarvest();
 
-        // Closes open visits and removes the added components from surviving units, so no ungated
-        // MiningClaws stay behind. Logistics discards unpaid rewards when a match ends, so a visit
-        // closed here is reported but queues no reward.
         private static void ResetWaspHarvest()
         {
             try
             {
-                WaspScratch.Clear(); WaspScratch.AddRange(WaspOpenVisits); WaspOpenVisits.Clear();
-                foreach (var state in WaspScratch) FlushWaspVisit(state, true);
-                WaspScratch.Clear();
+                CancelAllWaspJobs();
+                foreach (var state in WaspOpenVisits) FlushWaspVisit(state, false);
                 StripWaspClaws();
             }
             catch (Exception error) { WaspWarn("reset", "Wasp harvest reset: " + error.Message); }
-            WaspByClaws.Clear(); WaspByHolder.Clear(); WaspByUnit.Clear(); WaspOpenVisits.Clear();
+            WaspByClaws.Clear(); WaspByUnit.Clear(); WaspOpenVisits.Clear(); WaspScratch.Clear();
         }
 
         private static void WaspUnitDestroyed(Unit unit, GameObject instigator) => WaspUnitGone(unit);
@@ -189,17 +219,17 @@ namespace Si_Logistics
         private static void RegisterWasp(WaspState state)
         {
             WaspByClaws[state.ClawsId] = state;
-            WaspByHolder[state.HolderId] = state;
             WaspByUnit[state.UnitId] = state;
         }
 
         // Forget a unit; a deposit visit still open is closed first.
         private static void RemoveWasp(WaspState state)
         {
+            CancelWaspJob(state.UnitId, false);
             WaspByClaws.Remove(state.ClawsId);
-            WaspByHolder.Remove(state.HolderId);
             WaspByUnit.Remove(state.UnitId);
             if (state.Pending > 0) { WaspOpenVisits.Remove(state); FlushWaspVisit(state); }
+            DestroyWaspComponents(state.Claws, state.Holder);
         }
 
         private static void PruneWasps()
@@ -216,22 +246,28 @@ namespace Si_Logistics
             WaspScratch.Clear();
         }
 
-        // Called every server frame: one comparison unless a visit is open or the 10 s sweep is due.
         private static void UpdateWaspHarvest()
         {
+            if (WaspStandaloneLoaded && WaspHarvestInstalled)
+            {
+                ReleaseWaspInstallation();
+                MelonLoader.MelonLogger.Warning("Wasp harvest: the standalone mod loaded. Integrated Wasp harvest is off.");
+            }
+            if (!WaspHarvestActive) return;
             float now = Time.time;
-            if (WaspOpenVisits.Count == 0 && now < WaspNextSweep) return;
             try
             {
-                if (WaspOpenVisits.Count > 0)
+                UpdateWaspJobs(now);
+                if (WaspOpenVisits.Count > 0 && now >= WaspNextVisitCheck)
                 {
+                    WaspNextVisitCheck = now + 0.25f;
                     // Three silent ticks close a visit, which absorbs jitter of the native deposit tick.
                     float quiet = Math.Max(3f * Cfg.WaspHarvest.TickSeconds, 2.5f);
                     for (int i = WaspOpenVisits.Count - 1; i >= 0; i--)
                     {
                         var state = WaspOpenVisits[i];
                         bool empty = !state.Alive || state.Holder.AmountStored <= 0;
-                        bool loadUsed = state.Alive && Cfg.WaspHarvest.DepositCooldownSeconds > 0 && state.Pending >= state.Holder.MaxAmount;
+                        bool loadUsed = state.Alive && Cfg.WaspHarvest.DepositCooldownSeconds > 0 && state.Pending >= state.VisitCapacity;
                         if (!empty && !loadUsed && now - state.LastDeposit <= quiet) continue;
                         WaspOpenVisits.RemoveAt(i);
                         FlushWaspVisit(state);
@@ -245,6 +281,7 @@ namespace Si_Logistics
             }
             catch (Exception error) { WaspWarn("update", "Wasp harvest update: " + error.Message); }
         }
+        private static float WaspNextVisitCheck;
 
         // ---- called from WaspHarvestPatches.cs ----
 
@@ -284,12 +321,11 @@ namespace Si_Logistics
             return Math.Max(0f, cooldown - (now - state.VisitStart));
         }
 
-        // Gate for ResourceHolder.RetrieveResource on an added holder; its only caller is the native
-        // deposit tick. Returns the amount that may leave the cargo now; 0 = blocked.
         private static int WaspAllowedDeposit(WaspState state, int amount)
         {
+            if (!WaspHarvestActive || !MatchAcceptsRewards || !WaspCanUnload(state)) return 0;
             if (amount <= 0 || Cfg.WaspHarvest.DepositCooldownSeconds <= 0) return amount;
-            if (state.VisitOpen) return Math.Max(0, Math.Min(amount, state.Holder.MaxAmount - state.Pending));   // one load per visit
+            if (state.VisitOpen) return Math.Max(0, Math.Min(amount, state.VisitCapacity - state.Pending));
             float now = Time.time;
             float left = WaspCooldownLeft(state, now);
             if (left <= 0) return amount;   // a new visit starts with this tick
@@ -304,56 +340,65 @@ namespace Si_Logistics
             return 0;
         }
 
-        private static void WaspDeposited(WaspState state, int amount)
+        private static void WaspDeposited(WaspState state, int amount, Player pilot, int epoch)
         {
             if (amount <= 0) return;
             float now = Time.time;
             if (state.Pending == 0)
             {
-                // A new visit: the cooldown runs from here and the reward belongs to this match.
                 WaspOpenVisits.Add(state);
                 state.VisitStart = now;
-                state.PendingEpoch = RewardEpoch;
+                state.VisitCapacity = state.Holder.MaxAmount;
             }
             state.Pending += amount;
             state.LastDeposit = now;
             var holder = state.Holder;
             if (holder.RemainingSpace > 0) state.FullNoticeSent = false;
-            Player pilot = state.Unit ? state.Unit.ControlledBy : null;
-            if (pilot == null) return;
-            state.PendingPlayer = pilot;
-            state.PendingSteamId = SteamId(pilot);
+            long id = SteamId(pilot);
+            if (id != state.PendingSteamId)
+            {
+                ReportWaspVisit(state);
+                state.PendingPlayer = pilot;
+                state.PendingSteamId = id;
+            }
+            if (id == 0) return;
+            state.PendingPilotAmount += amount;
+            var tally = WaspTallyFor(pilot);
+            tally.Delivered += amount;
+            if (WaspHarvestActive && epoch == RewardEpoch && MatchAcceptsRewards && Connected(pilot, id))
+            {
+                decimal credits = amount * (decimal)Cfg.WaspHarvest.RewardShare;
+                state.PendingPilotCredits += credits;
+                tally.Reward += credits;
+            }
             // The last tick is covered by the final delivery line.
             if (holder.AmountStored <= 0 || now - state.LastUnloadNotice < Cfg.WaspHarvest.NotifyIntervalSeconds) return;
             state.LastUnloadNotice = now;
             WaspSay(pilot, "Unloading " + Bar(WaspPercent(holder.AmountStored, holder.MaxAmount)) + " " + holder.AmountStored + " Biotics left.");
         }
 
-        // The team already received the Biotics through the native deposit tick. The pilot's share joins
-        // the batched Logistics payout, so wallet handling, payout delay and announcements stay in one place.
-        private static void FlushWaspVisit(WaspState state, bool matchOver = false)
+        private static void FlushWaspVisit(WaspState state, bool announce = true)
         {
-            int delivered = state.Pending;
+            state.Pending = 0;
+            if (state.Holder) state.Holder.MaxAmount = Math.Max(Cfg.WaspHarvest.MaxCarry, state.Holder.AmountStored);
+            ReportWaspVisit(state, announce);
+            state.PendingPlayer = null;
+            state.PendingSteamId = 0;
+        }
+
+        private static void ReportWaspVisit(WaspState state, bool announce = true)
+        {
+            int delivered = state.PendingPilotAmount;
+            state.PendingPilotAmount = 0;
             Player pilot = state.PendingPlayer;
             long id = state.PendingSteamId;
-            int epoch = state.PendingEpoch;
-            state.Pending = 0; state.PendingPlayer = null; state.PendingSteamId = 0;   // the next visit pays whoever pilots then
-            if (delivered <= 0 || id == 0) return;   // unloaded with nobody at the controls: the team got it, nobody is paid
-            bool connected = Connected(pilot, id);
-            decimal share = (decimal)Cfg.WaspHarvest.RewardShare;
-            bool rewarded = !matchOver && connected && share > 0 && epoch == RewardEpoch && MatchAcceptsRewards && Cfg.Enabled;
-            if (rewarded) QueueReward(pilot, delivered, share, epoch);
-            if (!WaspTallies.TryGetValue(id, out var tally)) WaspTallies[id] = tally = new WaspTally();
-            if (connected) tally.Name = pilot.PlayerName ?? tally.Name;
-            tally.Delivered += delivered;
-            if (rewarded) tally.Reward += delivered * share;
-            if (Cfg.Debug) DebugMsg("Wasp harvest: player=" + id + " delivered " + delivered + " Biotics" +
-                (rewarded ? ", queued " + (delivered * share).ToString("0.##", CultureInfo.InvariantCulture) + " credits" : ""));
-            if (!connected) return;
+            decimal credits = state.PendingPilotCredits;
+            state.PendingPilotCredits = 0;
+            if (id != 0 && credits > 0) QueueEarnedReward(id, pilot, credits, true);
+            if (!announce || delivered <= 0 || !WaspHarvestActive || !Connected(pilot, id)) return;
             string text = "Delivered " + delivered + " Biotics to the team.";
-            if (rewarded)
-                text += " +" + (delivered * share).ToString("0.#", CultureInfo.InvariantCulture) + " credits" +
-                    (KohCredits.Available ? " with your next logistics payout." : " pending: no credit wallet found.");
+            if (credits > 0)
+                text += " +" + credits.ToString("0.#", CultureInfo.InvariantCulture) + " credits queued for your Logistics payout.";
             float left = state.Alive ? WaspCooldownLeft(state, Time.time) : 0f;
             if (left > 0) text += " Next unload in " + Math.Ceiling(left).ToString("0", CultureInfo.InvariantCulture) + " s.";
             WaspSay(pilot, text);

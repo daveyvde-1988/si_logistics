@@ -94,10 +94,10 @@ Surviving cargo, already-earned pending credits and individual sub-switch settin
 Re-enabling resumes eligible harvesting and pending payouts; transports need a fresh Follow assignment to resume AI duty.
 The harvesterfix sub-switch does not disable the separate transport transfers or reward functions.
 
-Cargo and automation state are temporary. Match start/end and scene cleanup clear cargo, assignments, pending credits and score remainders.
+Cargo and automation state are temporary. Match start/end and scene cleanup clear cargo, assignments and score remainders.
 Cargo is not saved across server restarts. Destroying a transport loses its cargo.
 Cancelling AI duty does not discard surviving same-team cargo; a player can still use it.
-Disconnect removes that player's reward accounts and fractional score state.
+Disconnect clears fractional score state. Unpaid personal credits remain with the player's Steam ID.
 
 ## Personal-credit and player-score rewards
 
@@ -108,12 +108,12 @@ While the master switch is on, player harvester refinery deliveries earn `Person
 These pickup rewards do not credit the transport driver for collection; its delivery reward is earned when resources reach the refinery.
 AI-only work earns no personal driver reward.
 
-Credits require a compatible active wallet API: King of the Hill's, or Si_Buy's when King of the Hill does not provide one. They are separate from the team's resource pool and normal round score.
-Earned credit amounts accumulate per connected player, retaining fractional credit between batches.
+Si_Buy is the wallet for all Logistics personal credits. Earned credits accumulate by Steam ID, including fractions, and can be paid while the player is disconnected.
+Unpaid credits survive round and scene changes and controlled restarts. Logistics keeps them in `UserData/cfg/Logistics/PendingCredits.json`. Si_Buy controls what happens to balances it has already credited.
 `DeliveryCooldownSeconds` sets the delay for a new payout window; later earnings do not push an existing due time back.
 Rate changes affect newly earned rewards. Cooldown changes affect new payout windows and new delivery cooldowns, not timers already scheduled.
 Zero cooldown makes a new payout eligible on the next update. Unavailable-provider retries have a minimum one-second interval.
-An ambiguous external grant exception does not automatically retry the attempted batch, to avoid duplicate payment.
+When a grant throws, Logistics checks the balance in the same call stack. A confirmed payment settles the batch and a confirmed unchanged balance leaves it queued. Unconfirmed and interrupted grants are held for manual review and logged with the player and amount. The ledger is updated before grants and also checkpoints newly earned credits every few seconds and on controlled shutdown.
 Successful payout announcements follow `PersonalBonus.AnnounceToPlayer`.
 
 ### Player round score
@@ -122,7 +122,7 @@ Successful payout announcements follow `PersonalBonus.AnnounceToPlayer`.
 `ScoreTransfer` defaults to 1 point per 100 Balterium transferred from a player-driven harvester to a player-driven transport; only the harvester driver receives pickup score.
 Autonomous vehicles without player drivers earn no player score.
 
-Awards update normal `Player.Score` silently and do not require KoH.
+Awards update normal `Player.Score` silently and independently of Si_Buy.
 Fractional points carry forward per player, separately for unloads and transfers; rate changes apply to newly handled cargo.
 Disabling player Logistics score clears its remainders without removing awarded score.
 Remainders also clear on disconnect and match/scene cleanup. The master switch gates earning.
@@ -187,22 +187,22 @@ They are added to the spawned instance after its networked scripts are registere
 A creature that already carries these components, or has no primary attack, is left untouched.
 
 A primary-attack hit extracts `ExtractPerHit` Biotics within `ExtractionRadius` of the hit point when a player controls the Wasp, the cargo has room and the hit point is at most `GroundMaxHeight` above terrain or static ground.
-AI-controlled Wasps never extract. A hit that finds no Biotics remains a normal attack. Extraction uses the native patch call, so the patch is debited exactly as for a Shrimp.
-Extraction is server-side while melee damage is evaluated by the client, so a harvesting swing can still damage what it hits.
+The native extraction call debits the patch. Wasp melee damage to friendlies is suppressed while Wasp harvesting is active. Remote hit packets carry no weapon type, so the server filters friendly player hits that fall within replicated melee reach.
+The Wasp's cargo component is private to its claws. FPS recruitment can use the Wasp's normal unit classification, while AntiGrief's Shrimp block still applies.
+
+To start automatic harvesting, select one or more AI Wasps and issue Move onto a discovered Biotics patch. Each Wasp reserves a free patch for travel and harvesting. An assigned or harvesting Shrimp, another Wasp's reservation, or a player harvester at the patch can make it unavailable. The AI releases its reservation before returning to a friendly Bio Cache. It lands, waits for storage and cooldown as needed, fully unloads, then searches for a fresh available patch. A new order, player takeover or either switch turning off ends the assignment.
 
 To unload, the Wasp must hold still inside a friendly resource deposit point. Among the alien structures only the Bio Cache has one; the Nest does not.
 The native deposit tick moves `DepositAmount` Biotics every `TickSeconds`, limited by remaining team storage. The team receives the full amount.
 With `DepositCooldownSeconds` above zero, a visit begins at its first deposit tick and unloads at most `MaxCarry`; the next visit can begin once the cooldown has elapsed since that start. Zero removes both limits.
 
 A visit closes when the cargo is empty, the load is used up or deposit ticks have stopped for about three ticks.
-The pilot's `RewardShare` of the delivered amount then joins the batched personal-credit payout described below, with the same wallet, payout delay, fractional carry and match limits.
-A delivery made while nobody controls the Wasp pays nobody, and a visit still open when the match ends is not rewarded. Wasp deliveries award no round score and do not count for commander `BalteriumDeposited` rules.
+Each tick accrues the configured `RewardShare` of the accepted Biotics for the pilot who delivered them. It joins the payout queue when the visit closes or the pilot changes. Rejected Biotics return to the Wasp. AI deliveries earn team Biotics. Wasp deliveries do not award round score or count for commander `BalteriumDeposited` rules.
 The pilot sees a cargo bar while harvesting and unloading, at most one line per `NotifyIntervalSeconds`, plus cargo-full, too-high, cooldown and delivery messages.
 
-Setting changes apply to Wasps already in the field. While a switch is off, equipped Wasps keep their cargo and can still unload it, but cannot extract; Wasps spawned meanwhile are not equipped.
+Setting changes apply to Wasps already in the field. Either switch turning off pauses extraction, unloading and Wasp payouts while preserving cargo and earned credits. Re-enabling equips surviving Wasps and resumes eligible payouts. AI Wasps need a fresh Move to start harvesting again.
 At match end the added components are removed from surviving units. `/wasp` totals cover the current round.
-The standalone `Si_WaspHarvest.dll` provides the same feature and command. When it is loaded, the built-in Wasp harvest stays off and `/logistics` reports the conflict; use only one of the two.
-Mods that scan units for resource holders will also see equipped Wasps.
+The standalone `Si_WaspHarvest.dll` owns its own switch and `/wasp` command. Logistics yields when the standalone loads or `/wasp` is already registered. Remove the standalone DLL before cutover so the Logistics master switch controls all Wasp harvesting.
 
 ## Harvester coordination
 
@@ -419,7 +419,9 @@ Run `/logistics status` with debug enabled before moving a stalled vehicle so it
 
 ### Wasp harvest checks
 
-1. Fly a Wasp over a Biotics patch and attack the ground. Confirm the cargo bar, the patch amount dropping, the cargo-full message at 500 and no extraction above 4m or by an AI-controlled Wasp.
+1. Fly a Wasp over a Biotics patch and attack the ground. Confirm the cargo bar, the patch amount dropping, the cargo-full message at 500 and no extraction above 4 m.
 2. Hover still inside a Bio Cache. Confirm 50 Biotics per second reach the team, the delivery message, the 40% credit share in the next payout and the 30-second cooldown on an immediate second visit. Confirm the Nest accepts nothing.
-3. Change a setting with `/wasp set` while a Wasp is airborne and confirm it applies to that Wasp. Toggle Wasp harvest and the master switch; carried cargo should still unload.
-4. Join with an unmodded client and confirm the Wasp looks and attacks as usual. Confirm Shrimp harvesting and harvester refinery rewards are unchanged.
+3. Turn each switch off mid-unload. Confirm cargo, team storage and Wasp payouts pause, then resume when both switches are on. Reconnect and do a controlled restart during a Si_Buy outage. Verify each eligible payout settles once after Si_Buy comes back.
+4. With an unmodded remote client, recruit a Wasp into an FPS group, verify Shrimp recruitment is still blocked, and swing at friendly and enemy units to check melee damage.
+5. Select one and then several AI Wasps with Formation and UnitAI enabled. Check occupied and undiscovered patches, depleted patches, a full or destroyed cache, manual takeover and replacement orders. Verify landing, full unload and reservation release before return.
+6. Start with both Wasp DLLs present. Verify there is one `/wasp` owner and one extraction and deposit per tick. Repeat after removing the standalone DLL for cutover.

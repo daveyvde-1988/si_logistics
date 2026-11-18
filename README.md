@@ -8,13 +8,12 @@ MelonLoader and Admin Mod. Players do not need a client mod.
 
 - **Player hauling:** load friendly harvester cargo into ground or air transports
   and deliver it to friendly refineries.
-- **Driver rewards:** earn personal credits through a compatible King of the Hill
-  wallet, plus normal round score independently of that wallet.
+- **Driver rewards:** earn personal credits in Si_Buy and normal round score.
 - **Harvester coordination:** stable resource-patch assignments, refinery queues
   and continued mining while transports collect cargo.
 - **AI hauling:** assign transports to repeated collection and delivery duty.
-- **Wasp harvest:** player-flown Wasps harvest Biotics and deliver them to a
-  Bio Cache for a personal credit share.
+- **Wasp harvest:** pilots can earn personal credits by delivering Biotics to a
+  Bio Cache. Commanders can assign AI Wasps to repeat harvest and delivery.
 - **Commander score:** configurable rewards for production, construction,
   technology, combat and deliveries, with penalties for losses.
 - **Server controls:** configure transfer rates, capacities, ranges and rewards
@@ -36,9 +35,12 @@ To automate an AI transport, give it an immediate Follow/right-click order on a
 friendly harvester. It continues collection and delivery until another accepted
 commander order cancels duty. Harvester coordination is enabled by default.
 
-Alien players can harvest too: fly a **Wasp** low over a Biotics patch and hit
+Alien pilots can fly a **Wasp** low over a Biotics patch and hit
 the ground with the primary attack, then hover still inside a friendly Bio Cache
-to unload. Only player-flown Wasps harvest; AI Wasps are unchanged.
+to unload. Commanders can select one or more AI Wasps and issue Move onto
+discovered Biotics to start automatic harvesting. Both Logistics and Wasp harvest
+must be enabled. Remove the standalone `Si_WaspHarvest.dll` before using the
+integrated feature.
 
 ## Common commands
 

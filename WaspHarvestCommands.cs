@@ -71,6 +71,7 @@ namespace Si_Logistics
                     Reply(caller, "Fly a Wasp low over a Biotics patch and hit the ground with the primary attack. Carry up to " + c.MaxCarry +
                         ", then hover still inside your team's Bio Cache to unload. One load per " + c.DepositCooldownSeconds.ToString("0", CultureInfo.InvariantCulture) +
                         " s; you earn " + c.RewardShare.ToString("P0", CultureInfo.InvariantCulture) + " of each delivery as credits.");
+                    if (WaspOrdersInstalled) Reply(caller, "Commander: select AI Wasps and issue Move onto discovered Biotics to start harvesting.");
                     Reply(caller, "/wasp: your harvest and cooldown. Admin: /wasp set (list); /wasp set <key> <value> or +N / -N.");
                     return;
                 }
@@ -109,7 +110,7 @@ namespace Si_Logistics
         {
             var c = Cfg.WaspHarvest;
             Reply(caller, "Wasp harvest " + (WaspStandaloneLoaded ? "OFF (standalone Si_WaspHarvest.dll loaded; remove one of the two)" :
-                    !WaspHarvestInstalled ? "UNAVAILABLE (install failed; see server log with debug on)" : c.Enabled ? "ON" : "OFF") +
+                    !WaspHarvestInstalled ? "UNAVAILABLE (see server log)" : WaspHarvestActive ? "ON" : "OFF") +
                 " | carry " + c.MaxCarry + ", " + c.ExtractPerHit + " per hit within " + c.ExtractionRadius.ToString("0.#", CultureInfo.InvariantCulture) + " m" +
                 ", at most " + c.GroundMaxHeight.ToString("0.#", CultureInfo.InvariantCulture) + " m above ground" +
                 " | unload " + c.DepositAmount + " per " + c.TickSeconds.ToString("0.#", CultureInfo.InvariantCulture) + " s, one load per " +
@@ -167,7 +168,7 @@ namespace Si_Logistics
         private static void AddWaspHarvestModUI(ModUIExport export)
         {
             if (!WaspHarvestInstalled) return;   // /wasp is not registered: offer no rows that cannot work
-            export.Status("waspharvest", "Wasp harvest", Cfg.WaspHarvest.Enabled ? "ON" : "OFF")
+            export.Status("waspharvest", "Wasp harvest", WaspHarvestActive ? "ON" : "OFF")
                 .Status("wasps-equipped", "Wasps equipped (server)", WaspByClaws.Count.ToString(CultureInfo.InvariantCulture))
                 .Action("/wasp", "My Wasp harvest", "Your harvest this round, your Wasp's Bio Cache cooldown and the settings.").Presentation("action", "Wasp harvest")
                 .Action("/wasp help", "Wasp harvest help", "How Wasp harvesting works.").Presentation("action", "Wasp harvest");

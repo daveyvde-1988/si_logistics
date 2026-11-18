@@ -111,13 +111,14 @@ namespace Si_Logistics
         public override void OnInitializeMelon()
         {
             LoadConfig();
+            LoadRewardLedger();
             DebugMsg("Harvester Logistics config " + ConfigPath + ": enabled=" + Cfg.Enabled +
                 ", vehicles=" + string.Join(", ", Cfg.TransportUnits) +
                 ", capacity air/ground=" + Cfg.AirCargoCapacity + "/" + Cfg.GroundCargoCapacity +
                 ", load/unload per s=" + Cfg.LoadUnitsPerSecond + "/" + Cfg.UnloadUnitsPerSecond +
                 ", radius load/unload=" + Cfg.LoadRadius + "/" + Cfg.UnloadRadius +
                 ", cooldown=" + Cfg.DeliveryCooldownSeconds + "s, debug=" + Cfg.Debug + ", sounds=" + Cfg.Sounds.Enabled +
-                ", personal rewards=" + RewardSettings() + " as KoH credits");
+                ", personal rewards=" + RewardSettings() + " in Si_Buy");
         }
 
         private static void LoadConfig()
@@ -280,6 +281,7 @@ namespace Si_Logistics
                     case "off":
                         Cfg.Enabled = sub == "on";
                         if (!Cfg.Enabled) ReleaseLogisticsControl();
+                        ApplyWaspConfigToLive();
                         SaveConfig();
                         Reply(caller, "Logistics " + (Cfg.Enabled ? "enabled." : "disabled.")); break;
                     case "harvestershare":
@@ -367,7 +369,7 @@ namespace Si_Logistics
                 " | air rates " + Cfg.AirLoadUnitsPerSecond + "/" + Cfg.AirUnloadUnitsPerSecond + "/s" +
                 " | air " + Cfg.AirCargoCapacity + ", ground " + Cfg.GroundCargoCapacity +
                 " | cooldown " + Cfg.DeliveryCooldownSeconds.ToString("F0", CultureInfo.InvariantCulture) + " s" +
-                " | rewards " + RewardSettings() + (KohCredits.Available ? " (KoH linked)" : " (KoH not found)"));
+                " | rewards " + RewardSettings() + (BuyCredits.Available ? " (Si_Buy active)" : " (Si_Buy unavailable)"));
             ShowHarvesterStatus(caller);
             ShowAITransportStatus(caller);
             ShowWaspHarvestStatus(caller);
@@ -645,56 +647,66 @@ namespace Si_Logistics
         private static bool InTransferRange(Vector3 target, Vector3 position, float radius) =>
             radius >= 0f && (target - position).sqrMagnitude <= radius * radius;
 
-        // Reflection bridge to Si_KingOfTheHill.KingOfTheHill.GrantExternalCredits(long,int,string) and
-        // GetCreditsBySteamId(long); no compile-time dependency. KoH returns false while its /buy
-        // economy is inactive, so the player batch is retried after another 10 seconds.
-        // Where the wallet lives in Si_Buy instead (KoH without this API), Si_Buy.Buy offers the same
-        // two methods with the same meaning and is used as the fallback.
-        private static class KohCredits
+        private static class BuyCredits
         {
-            private static MethodInfo _grant, _balance;
-            private static bool _missingLogged;
+            private static Func<long, int, string, bool> _grant;
+            private static Func<long, int> _balance;
+            private static Func<bool> _active;
+            private static float _nextResolve;
 
-            public static bool Available => Resolve();
+            public static bool Available
+            {
+                get
+                {
+                    try { return Resolve() && _active(); }
+                    catch { return false; }
+                }
+            }
 
             private static bool Resolve()
             {
                 if (_grant != null) return true;
-                foreach (string wallet in new[] { "Si_KingOfTheHill.KingOfTheHill", "Si_Buy.Buy" })
+                if (Time.unscaledTime < _nextResolve) return false;
+                _nextResolve = Time.unscaledTime + 5f;
+                const BindingFlags flags = BindingFlags.Public | BindingFlags.Static;
+                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
                 {
-                    foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
-                    {
-                        Type type;
-                        try { type = assembly.GetType(wallet); } catch { continue; }
-                        if (type == null) continue;
-                        _grant = type.GetMethod("GrantExternalCredits", BindingFlags.Public | BindingFlags.Static, null,
-                                                new[] { typeof(long), typeof(int), typeof(string) }, null);
-                        _balance = type.GetMethod("GetCreditsBySteamId", BindingFlags.Public | BindingFlags.Static, null,
-                                                  new[] { typeof(long) }, null);
-                        break;
-                    }
-                    if (_grant != null) break;
+                    Type type;
+                    try { type = assembly.GetType("Si_Buy.Buy", false); }
+                    catch { continue; }
+                    if (type == null) continue;
+                    var grant = type.GetMethod("GrantExternalCredits", flags, null, new[] { typeof(long), typeof(int), typeof(string) }, null);
+                    var balance = type.GetMethod("GetCreditsBySteamId", flags, null, new[] { typeof(long) }, null);
+                    var active = type.GetProperty("BuyActive", flags)?.GetGetMethod();
+                    if (grant?.ReturnType != typeof(bool) || balance?.ReturnType != typeof(int) || active?.ReturnType != typeof(bool)) continue;
+                    _active = (Func<bool>)active.CreateDelegate(typeof(Func<bool>));
+                    _balance = (Func<long, int>)balance.CreateDelegate(typeof(Func<long, int>));
+                    _grant = (Func<long, int, string, bool>)grant.CreateDelegate(typeof(Func<long, int, string, bool>));
+                    return true;
                 }
-                if (_grant == null && !_missingLogged)
-                {
-                    DebugMsg("Logistics: Si_KingOfTheHill credit API not found; personal bonus inactive.");
-                    _missingLogged = true;
-                }
-                return _grant != null;
+                return false;
             }
 
             public enum GrantResult { Granted, Unavailable, Uncertain }
-            public static GrantResult TryGrant(long steamId, int amount, string reason)
+            public static GrantResult TryGrant(long steamId, int amount, int balanceBefore)
             {
-                if (!Resolve()) return GrantResult.Unavailable;
-                try { return (bool)_grant.Invoke(null, new object[] { steamId, amount, reason }) ? GrantResult.Granted : GrantResult.Unavailable; }
-                catch (Exception exception) { DebugWarning("Logistics: KoH credit result uncertain; attempted batch will NOT be retried to avoid duplicate credits: " + exception.Message); return GrantResult.Uncertain; }
+                if (!Available) return GrantResult.Unavailable;
+                try { return _grant(steamId, amount, "Logistics rewards (batched)") ? GrantResult.Granted : GrantResult.Unavailable; }
+                catch (Exception error)
+                {
+                    // Si_Buy updates this balance synchronously before logging the grant. Check
+                    // it in the same call stack to distinguish a rejected payment from a logged failure.
+                    int current = TryGetBalance(steamId);
+                    DebugWarning("Logistics: Si_Buy threw while granting credits: " + error.Message);
+                    if (current == balanceBefore + amount) return GrantResult.Granted;
+                    return current == balanceBefore ? GrantResult.Unavailable : GrantResult.Uncertain;
+                }
             }
 
             public static int TryGetBalance(long steamId)
             {
-                if (!Resolve() || _balance == null) return -1;
-                try { return (int)_balance.Invoke(null, new object[] { steamId }); }
+                if (!Available) return -1;
+                try { return _balance(steamId); }
                 catch { return -1; }
             }
         }

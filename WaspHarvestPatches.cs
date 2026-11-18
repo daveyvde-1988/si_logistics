@@ -1,25 +1,12 @@
 using System;
+using System.Collections.Generic;
+using System.Reflection.Emit;
+using HarmonyLib;
+using SilicaAdminMod;
 using UnityEngine;
 
 namespace Si_Logistics
 {
-    // Harmony patches of Wasp harvest (installed by InstallWaspHarvest):
-    //
-    //   Unit.OnPostInit                 postfix  equip matching creatures (WaspHarvestInjector.cs)
-    //   MiningClaws.OnExtractAttackHit  prefix   added claws only: skip unless a player controls the
-    //                                            creature, the cargo has room and the hit is near the ground
-    //                                   postfix  cargo-bar chat line when the cargo grew
-    //   ResourceHolder.RetrieveResource prefix   added holders only: Bio Cache cooldown; cap the request to
-    //                                            what is left of the visit's one load, or return 0
-    //                                   postfix  amount that left the cargo on this deposit tick
-    //
-    // On a unit holder, RetrieveResource is called only by the native deposit tick in
-    // MiningClaws.OrderedUpdate, which already clamps the request to the team's remaining capacity.
-    // That tick is the method the harvester-reward transpiler in LogisticsRewards.cs observes; its
-    // receipt is opened only for UnitType.Harvester, so a Wasp is never paid twice.
-    //
-    // Claws and holders that were not added here (every Shrimp, every Harvester) leave after one
-    // dictionary lookup. Each body is guarded: an exception must never reach the game's update loop.
     public sealed partial class LogisticsMod
     {
         private static void WaspSpawnPostfix(Unit __instance)
@@ -31,28 +18,24 @@ namespace Si_Logistics
         private static bool WaspExtractPrefix(MiningClaws __instance, Vector3 attackPosition, out int __state)
         {
             __state = -1;
-            bool ours = false;
+            if (WaspByClaws.Count == 0 || !WaspByClaws.TryGetValue(__instance.GetInstanceID(), out var state)) return true;
+            if (!WaspHarvestActive || !MatchAcceptsRewards) return false;
             try
             {
-                if (WaspByClaws.Count == 0 || !WaspByClaws.TryGetValue(__instance.GetInstanceID(), out var state)) return true;
-                ours = true;
-                if (!WaspHarvestActive) return false;
-                var creature = __instance.Creature;
                 var holder = state.Holder;
-                if (creature == null || holder == null || holder.ResourceType == null) return false;
-                Player pilot = creature.ControlledBy;
-                if (pilot == null) return false;   // players only: an AI-controlled Wasp never extracts
-
-                bool resourceHere = ResourceArea.GetResourceAmount(holder.ResourceType, attackPosition, __instance.ExtractionRadius) > 0;
-                if (holder.RemainingSpace <= 0)
+                if (!state.Alive || !holder.ResourceType) return false;
+                Player pilot = state.Unit.ControlledBy;
+                if (pilot == null)
                 {
-                    if (resourceHere) WaspCargoFullHit(state, pilot);
-                    return false;
+                    if (!WaspCanExtract(state, attackPosition) || holder.RemainingSpace <= 0) return false;
                 }
-                if (!resourceHere) return true;   // nothing to take: the native code extracts 0 and the hit stays a normal attack
-                if (!WaspNearGround(attackPosition))
+                else if (holder.RemainingSpace <= 0 || !WaspNearGround(attackPosition))
                 {
-                    WaspTooHigh(state, pilot);
+                    if (ResourceArea.GetResourceAmount(holder.ResourceType, attackPosition, __instance.ExtractionRadius) > 0)
+                    {
+                        if (holder.RemainingSpace <= 0) WaspCargoFullHit(state, pilot);
+                        else WaspTooHigh(state, pilot);
+                    }
                     return false;
                 }
                 __state = holder.AmountStored;
@@ -61,27 +44,22 @@ namespace Si_Logistics
             catch (Exception error)
             {
                 WaspWarn("extract", "Wasp harvest extract prefix: " + error.Message);
-                return !ours;   // never let an added claw extract ungated
+                return false;
             }
         }
 
         private static void WaspExtractPostfix(MiningClaws __instance, int __state)
         {
-            if (__state < 0) return;
+            if (__state < 0 || !WaspHarvestActive) return;
             try
             {
-                if (!WaspByClaws.TryGetValue(__instance.GetInstanceID(), out var state) || state.Holder == null) return;
+                if (!WaspByClaws.TryGetValue(__instance.GetInstanceID(), out var state) || !state.Alive) return;
                 int gained = state.Holder.AmountStored - __state;
-                if (gained <= 0) return;
-                var creature = __instance.Creature;
-                Player pilot = creature != null ? creature.ControlledBy : null;
-                if (pilot != null) WaspExtracted(state, pilot, gained);
+                if (gained > 0 && state.Unit.ControlledBy != null) WaspExtracted(state, state.Unit.ControlledBy, gained);
             }
             catch (Exception error) { WaspWarn("extracted", "Wasp harvest extract postfix: " + error.Message); }
         }
 
-        // Hit point at most GroundMaxHeight above terrain or static geometry. The ray starts 2 m above
-        // the hit point, so a point slightly below the surface still counts.
         private static bool WaspNearGround(Vector3 point)
         {
             const float lift = 2f;
@@ -89,28 +67,73 @@ namespace Si_Logistics
             return Physics.Raycast(point + Vector3.up * lift, Vector3.down, out _, Cfg.WaspHarvest.GroundMaxHeight + lift, mask, QueryTriggerInteraction.Ignore);
         }
 
-        private static bool WaspRetrievePrefix(ResourceHolder __instance, ref int amount, ref int __result)
+        // The melee damage call follows the attack-hit delegates, which must still run to extract.
+        private static IEnumerable<CodeInstruction> ObserveWaspMelee(IEnumerable<CodeInstruction> instructions)
         {
-            try
+            var apply = AccessTools.Method(typeof(DamageManager), nameof(DamageManager.ApplyDamage),
+                new[] { typeof(Collider), typeof(float), typeof(EDamageType), typeof(GameObject), typeof(Vector3) });
+            var replacement = AccessTools.Method(typeof(LogisticsMod), nameof(ApplyWaspMelee));
+            int replaced = 0;
+            foreach (var instruction in instructions)
             {
-                if (WaspByHolder.Count == 0 || !WaspByHolder.TryGetValue(__instance.GetInstanceID(), out var state)) return true;
-                int allowed = WaspAllowedDeposit(state, amount);
-                if (allowed <= 0 && amount > 0) { __result = 0; return false; }
-                amount = allowed;
-                return true;
+                if (!instruction.Calls(apply)) { yield return instruction; continue; }
+                yield return new CodeInstruction(instruction) { opcode = OpCodes.Ldarg_0, operand = null };
+                yield return new CodeInstruction(OpCodes.Call, replacement);
+                replaced++;
             }
-            catch (Exception error)
-            {
-                WaspWarn("retrieve", "Wasp harvest retrieve prefix: " + error.Message);
-                return true;
-            }
+            if (replaced != 1) throw new InvalidOperationException("Expected one native creature melee damage call.");
         }
 
-        private static void WaspRetrievePostfix(ResourceHolder __instance, int __result)
+        private static float ApplyWaspMelee(DamageManager target, Collider collider, float damage, EDamageType type,
+            GameObject instigator, Vector3 hitPoint, CreatureAttack attack)
         {
-            if (__result <= 0 || WaspByHolder.Count == 0) return;   // nothing left the cargo (blocked by the prefix, or empty)
-            try { if (WaspByHolder.TryGetValue(__instance.GetInstanceID(), out var state)) WaspDeposited(state, __result); }
-            catch (Exception error) { WaspWarn("retrieved", "Wasp harvest retrieve postfix: " + error.Message); }
+            if (WaspHarvestActive && WaspByUnit.Count != 0 && attack.CreatureOwner && attack.CreatureOwner.Team &&
+                target.Team == attack.CreatureOwner.Team && WaspByUnit.ContainsKey(attack.CreatureOwner.GetInstanceID())) return 0f;
+            return target.ApplyDamage(collider, damage, type, instigator, hitPoint);
+        }
+
+        private static void WaspClientMelee(object sender, OnPreDamageReceivedArgs hit)
+        {
+            if (!WaspHarvestActive || WaspByUnit.Count == 0 || hit == null || hit.Damage <= 0f || !hit.Instigator) return;
+            try
+            {
+                var wasp = hit.Instigator.GetComponent<CreatureDecapod>();
+                var target = hit.DamageManager.Owner;
+                if (!wasp || !target || !wasp.Team || target.Team != wasp.Team || target == wasp ||
+                    !WaspByUnit.ContainsKey(wasp.GetInstanceID())) return;
+
+                // The client hit packet gives the instigator and damage but no weapon type.
+                if (WithinWaspMeleeReach(wasp, wasp.AttackPrimary, target) || WithinWaspMeleeReach(wasp, wasp.AttackSecondary, target))
+                    hit.Damage = 0f;
+            }
+            catch (Exception error) { WaspWarn("client-melee", "Wasp friendly damage filter: " + error.Message); }
+        }
+
+        private static bool WithinWaspMeleeReach(CreatureDecapod wasp, CreatureAttack attack, BaseGameObject target)
+        {
+            if (attack == null || !attack.IsMelee) return false;
+            Transform origin = attack.AttackTransform ? attack.AttackTransform : wasp.SwarmBugModel.transform;
+            Vector3 position = attack.GetAttackPosition(origin, wasp.GetViewRotation());
+            Vector3 local = GameMath.InverseTransformPointUnscaled(target.transform, position);
+            const float replicationMargin = 2f;
+            float reach = attack.Radius + replicationMargin;
+            return (target.PhysicalBounds.ClosestPoint(local) - local).sqrMagnitude <= reach * reach;
+        }
+
+        private static IEnumerable<CodeInstruction> ObserveWaspExtraction(IEnumerable<CodeInstruction> instructions)
+        {
+            var extract = AccessTools.Method(typeof(ResourceArea), nameof(ResourceArea.ExtractResource),
+                new[] { typeof(Resource), typeof(Vector3), typeof(int), typeof(float) });
+            var replacement = AccessTools.Method(typeof(LogisticsMod), nameof(ExtractWaspBiotics));
+            int replaced = 0;
+            foreach (var instruction in instructions)
+            {
+                if (!instruction.Calls(extract)) { yield return instruction; continue; }
+                yield return new CodeInstruction(instruction) { opcode = OpCodes.Ldarg_0, operand = null };
+                yield return new CodeInstruction(OpCodes.Call, replacement);
+                replaced++;
+            }
+            if (replaced != 1) throw new InvalidOperationException("Expected one native Biotics extraction call.");
         }
     }
 }

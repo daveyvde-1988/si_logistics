@@ -6,7 +6,7 @@ Logistics makes Balterium hauling a useful team role: players can move resources
 
 ## Hauling and player rewards
 - **Resource transport.** Supported vehicles collect from friendly harvesters and deliver to friendly resource-deposit structures. The default allowlist is Shuttle, Dropship, Squad Transport and Platoon Hauler. Transfers respect cargo capacity, source resources, team storage room and range; deliveries count the amount actually accepted.
-- **Personal credits.** Player harvester refinery deliveries earn a 7% share; player transport deliveries earn 9%. A player harvester driver earns a separate 6% share when a player-driven transport collects its cargo. Credits require a compatible active King of the Hill wallet. AI-only work earns no personal driver reward. Rewards accumulate and are paid in batches, with fractional credit retained.
+- **Personal credits.** Player harvester refinery deliveries earn a 7% share, player transport deliveries earn 9%, and Wasp pilots earn 40% of accepted Biotics. A player harvester driver earns a separate 6% share when a player-driven transport collects its cargo. Si_Buy pays the accumulated rewards with fractional carry. AI-only work earns no personal driver reward.
 - **Player round score.** Player deliveries earn 2 points per 100 Balterium accepted at a refinery. Player-to-player pickups earn the harvester driver 1 point per 100 transferred. Separate fractional remainders are retained. This normal round score does not require the personal-credit wallet.
 
 ## Commander round score
@@ -85,7 +85,7 @@ Separate admin commands: /logisticsscore on|off; /scoreunload 0..100; /scoretran
 ## Configuration and dependencies
 - **Saved settings.** UserData/cfg/Logistics/Si_Logistics_Config.json. Commands save changes. Reload applies manual JSON edits. The legacy UserData/Logistics_cfg configuration is imported only when the new destination is missing. Missing settings inherit defaults. Commander rules, transport types, allocation/reservation tuning and some presentation options are JSON settings.
 - **Server installation.** Dedicated-server Mono/netstandard2.1 mod using MelonLoader and Admin Mod APIs. Install Si_Logistics.dll in the server Mods folder. Optional sounds come from UserData/sounds/logistics_tick.wav and logistics_ding.wav. Players need no client mod for gameplay.
-- **Optional integrations.** A compatible King of the Hill wallet supplies personal credits; normal player score is separate. Compatible Si_Buy/legacy KoH purchase handlers support commander purchase exclusions. Schema-2 ModUI metadata exposes existing controls through compatible ServerModUI/ClientModUI companions. Ranks reward multipliers require their own reviewed Logistics DLL hash; this overview does not establish compatibility.
+- **Optional integrations.** Si_Buy supplies personal credits independently of normal player score. Compatible Si_Buy/legacy KoH purchase handlers support commander purchase exclusions. Schema-2 ModUI metadata exposes controls through compatible ServerModUI/ClientModUI companions. Ranks multipliers require a reviewed adapter for the Si_Buy payout path.
 
 ## Diagnostics and lifecycle
 Debug enables controller/vehicle diagnostics and 30-second transfer/navigation timing summaries. Shared per-tick lists and caches reduce repeated work; an individual transport error receives a 10-second backoff. No measured speedup is claimed here.
