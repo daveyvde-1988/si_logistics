@@ -46,6 +46,7 @@ namespace Si_Logistics
         public CommandConfig Commands = new CommandConfig();
         [JsonProperty("harvesterfix")]
         public HarvesterFixConfig HarvesterFix = new HarvesterFixConfig();
+        public WaspHarvestConfig WaspHarvest = new WaspHarvestConfig();
 
         public sealed class CommandConfig
         {
@@ -189,6 +190,8 @@ namespace Si_Logistics
             if (previousHarvesterSettings != JsonConvert.SerializeObject(Cfg.HarvesterFix)) ResetHarvesterFix(true);
             if (Cfg.AITransport == null) Cfg.AITransport = new AITransportConfig();
             ValidateAITransportConfig();
+            ValidateWaspHarvestConfig();
+            ApplyWaspConfigToLive();
             if (!Cfg.Enabled) ReleaseLogisticsControl();
             else if (!Cfg.AITransport.Enabled) ResetAITransports(true);
         }
@@ -223,6 +226,7 @@ namespace Si_Logistics
             InstallHarvesterFix();
             InstallAITransport();
             InstallCommanderScore();
+            InstallWaspHarvest();
             // Fixed public surface: both names always expose exactly the same commands.
             HelperMethods.RegisterPlayerCommand("logistics", OnLogisticsCommand, Cfg.Commands.HideFromChat);
             HelperMethods.RegisterPlayerCommand("logi", OnLogisticsCommand, Cfg.Commands.HideFromChat);
@@ -366,6 +370,7 @@ namespace Si_Logistics
                 " | rewards " + RewardSettings() + (KohCredits.Available ? " (KoH linked)" : " (KoH not found)"));
             ShowHarvesterStatus(caller);
             ShowAITransportStatus(caller);
+            ShowWaspHarvestStatus(caller);
             Reply(caller, "Refineries (server): " + LogisticsRefineryCount() + ".");
             Reply(caller, "Logistics score " + (Cfg.LogisticsScore ? "ON" : "OFF") +
                 " | unload " + Cfg.ScoreUnload + " | transfer " + Cfg.ScoreTransfer + " points per 100 Balterium" +
@@ -389,6 +394,7 @@ namespace Si_Logistics
             Reply(caller, "Admin: cooldown <seconds>; debug on|off; reload; harvesterfix on|off; aitransport on|off.");
             Reply(caller, "Admin: /logisticsscore on|off; /scoreunload <0..100>; /scoretransfer <0..100> (points per 100 Balterium).");
             Reply(caller, "Admin: /logisticsscorecomander on|off; edit CommanderScore.Rules in config, then /logistics reload.");
+            Reply(caller, "Wasp harvest: /wasp [help] for everyone. Admin: /wasp set <key> <value>.");
         }
 
         private static bool TryParseFloat(string text, out float value) =>
@@ -405,6 +411,7 @@ namespace Si_Logistics
         {
             if (!Game.GetIsServer()) return;
             UpdateHarvesterFix();
+            UpdateWaspHarvest();
             // Earned rewards are retained while the master switch pauses payouts.
             try { PayDueRewards(); }
             catch (Exception exception) { DebugWarning("Logistics payout: " + exception.Message); }
@@ -641,6 +648,8 @@ namespace Si_Logistics
         // Reflection bridge to Si_KingOfTheHill.KingOfTheHill.GrantExternalCredits(long,int,string) and
         // GetCreditsBySteamId(long); no compile-time dependency. KoH returns false while its /buy
         // economy is inactive, so the player batch is retried after another 10 seconds.
+        // Where the wallet lives in Si_Buy instead (KoH without this API), Si_Buy.Buy offers the same
+        // two methods with the same meaning and is used as the fallback.
         private static class KohCredits
         {
             private static MethodInfo _grant, _balance;
@@ -651,16 +660,20 @@ namespace Si_Logistics
             private static bool Resolve()
             {
                 if (_grant != null) return true;
-                foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+                foreach (string wallet in new[] { "Si_KingOfTheHill.KingOfTheHill", "Si_Buy.Buy" })
                 {
-                    Type type;
-                    try { type = assembly.GetType("Si_KingOfTheHill.KingOfTheHill"); } catch { continue; }
-                    if (type == null) continue;
-                    _grant = type.GetMethod("GrantExternalCredits", BindingFlags.Public | BindingFlags.Static, null,
-                                            new[] { typeof(long), typeof(int), typeof(string) }, null);
-                    _balance = type.GetMethod("GetCreditsBySteamId", BindingFlags.Public | BindingFlags.Static, null,
-                                              new[] { typeof(long) }, null);
-                    break;
+                    foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
+                    {
+                        Type type;
+                        try { type = assembly.GetType(wallet); } catch { continue; }
+                        if (type == null) continue;
+                        _grant = type.GetMethod("GrantExternalCredits", BindingFlags.Public | BindingFlags.Static, null,
+                                                new[] { typeof(long), typeof(int), typeof(string) }, null);
+                        _balance = type.GetMethod("GetCreditsBySteamId", BindingFlags.Public | BindingFlags.Static, null,
+                                                  new[] { typeof(long) }, null);
+                        break;
+                    }
+                    if (_grant != null) break;
                 }
                 if (_grant == null && !_missingLogged)
                 {

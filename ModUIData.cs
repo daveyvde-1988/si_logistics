@@ -41,7 +41,7 @@ namespace Si_Logistics
         public static string ModUIData()
         {
             string F(double v)=>v.ToString("0.######",CultureInfo.InvariantCulture);
-            return ModUIExport.New()
+            var export = ModUIExport.New()
                 .Info("Carry Balterium from friendly harvesters to refineries using ground and air transports. Automate transport deliveries and harvester routing, and earn credit and score rewards for resource transfers and deliveries. Includes configurable commander scoring.")
                 .Status("master","Logistics",Cfg.Enabled?"ON":"OFF")
                 .Status("harvesterfix","Harvester recovery",Cfg.HarvesterFix.Enabled?"ON":"OFF")
@@ -77,8 +77,9 @@ namespace Si_Logistics
                 .OnOff("/logistics sounds","Transfer sounds","Play transfer start/stop sounds.",true,Cfg.Sounds.Enabled).Presentation("checkbox","Feedback")
                 .OnOff("/logistics announce","Reward announcements","Tell drivers when personal credits are paid.",true,Cfg.PersonalBonus.AnnounceToPlayer).Presentation("checkbox","Feedback")
                 .Value("/logistics progress","Progress message interval","Seconds between progress messages; zero keeps start/stop messages only.",true,F(Cfg.Chat.ProgressIntervalSeconds)).Presentation("slider","Feedback",0,60,1,"s")
-                .Action("/logistics reload","Reload config","Read existing configuration; does not change its location.",true).Presentation("action","Diagnostics")
-                .Build();
+                .Action("/logistics reload","Reload config","Read existing configuration; does not change its location.",true).Presentation("action","Diagnostics");
+            AddWaspHarvestModUI(export);
+            return export.Build();
         }
     }
 }

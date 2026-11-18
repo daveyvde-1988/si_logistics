@@ -13,6 +13,8 @@ MelonLoader and Admin Mod. Players do not need a client mod.
 - **Harvester coordination:** stable resource-patch assignments, refinery queues
   and continued mining while transports collect cargo.
 - **AI hauling:** assign transports to repeated collection and delivery duty.
+- **Wasp harvest:** player-flown Wasps harvest Biotics and deliver them to a
+  Bio Cache for a personal credit share.
 - **Commander score:** configurable rewards for production, construction,
   technology, combat and deliveries, with penalties for losses.
 - **Server controls:** configure transfer rates, capacities, ranges and rewards
@@ -34,6 +36,10 @@ To automate an AI transport, give it an immediate Follow/right-click order on a
 friendly harvester. It continues collection and delivery until another accepted
 commander order cancels duty. Harvester coordination is enabled by default.
 
+Alien players can harvest too: fly a **Wasp** low over a Biotics patch and hit
+the ground with the primary attack, then hover still inside a friendly Bio Cache
+to unload. Only player-flown Wasps harvest; AI Wasps are unchanged.
+
 ## Common commands
 
 `/logistics` and `/logistics help` are available to everyone. `/logi` is an alias
@@ -49,6 +55,8 @@ for `/logistics` and all its subcommands. Setting changes require Admin Mod
 | `/logistics aitransport on` / `/logistics aitransport off` | Toggle AI transport duty. |
 | `/logistics reload` | Apply edited JSON settings. |
 | `/logistics debug on` / `/logistics debug off` | Toggle server diagnostics. |
+| `/wasp` / `/wasp help` | Show your Wasp harvest and Bio Cache cooldown, or how to harvest. |
+| `/wasp set enabled on` / `/wasp set enabled off` | Toggle Wasp harvest. |
 
 For capacities, rates, ranges, reward shares, sound options and scoring commands,
 see the [complete command reference](docs/REFERENCE.md#commands).
@@ -71,6 +79,9 @@ Default personal credit shares are **7%** for harvester refinery deliveries,
 player-to-player pickups. The delivering driver earns **2 points per 100**
 accepted at a refinery. Player-to-player pickups award the harvester driver
 **1 point per 100** transferred.
+
+A Wasp carries **500** Biotics, takes **20** per hit and unloads one load per
+**30 seconds** at a Bio Cache; its pilot earns a **40%** credit share.
 
 The [example configuration](Si_Logistics_Config.example.json) lists all defaults.
 The [detailed reference](docs/REFERENCE.md) explains rewards, commander rules,

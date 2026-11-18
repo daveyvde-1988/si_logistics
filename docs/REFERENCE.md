@@ -38,8 +38,21 @@ In the syntax below, choose one value wherever `|` appears; do not type the sepa
 | `/scoreunload <0..100>` | Admin | Player round-score points per 100 Balterium actually accepted at a refinery; default `2`. |
 | `/scoretransfer <0..100>` | Admin | Harvester-driver round-score points per 100 Balterium picked up by a player-driven transport; default `1`. |
 | `/logisticsscorecommander on\|off` | Admin | Commander round-score switch; default ON. `/logisticsscorecomander` is also accepted. |
+| `/wasp` or `/wasp status` | Everyone | Wasp harvest settings, your harvest, deliveries and earned credits this round, and the cargo and Bio Cache cooldown of the Wasp you control. |
+| `/wasp help` | Everyone | How to harvest with a Wasp. |
+| `/wasp set` | Admin | List every Wasp harvest setting with its value and range. |
+| `/wasp set enabled on\|off` | Admin | Wasp harvest sub-switch; default ON. |
+| `/wasp set carry <1..100000>` | Admin | Biotics per load, and the most one Bio Cache visit unloads; default `500`. |
+| `/wasp set perhit <1..10000>` | Admin | Biotics taken from the patch per extracting hit; default `20`. |
+| `/wasp set radius <0.5..50>` | Admin | Metres around the hit point searched for Biotics; default `3`. |
+| `/wasp set height <0..100>` | Admin | Greatest height of the hit point above ground that still extracts, in metres; default `4`. |
+| `/wasp set deposit <1..10000>` | Admin | Biotics unloaded per deposit tick; default `50`. |
+| `/wasp set cooldown <0..3600>` | Admin | Seconds per Bio Cache load, counted from the first deposit tick of a visit; zero disables it. Default `30`. |
+| `/wasp set reward <0..1>` | Admin | Pilot's personal-credit share of a Wasp delivery; default `0.4`. |
+| `/wasp set notify <0..60>` | Admin | Minimum seconds between two cargo-bar messages per Wasp; default `2`. |
 
-The score commands are separate command roots; `/logi` does not alias them.
+The score commands and `/wasp` are separate command roots; `/logi` does not alias them.
+Numeric `/wasp set` values also accept a step such as `+50` or `-5`; out-of-range results are rejected, not clamped.
 There are no standalone `/harvesterfix` or `/aitransport` commands, personal-bonus toggle or configurable extra command aliases.
 
 ## Configuration and migration
@@ -95,7 +108,7 @@ While the master switch is on, player harvester refinery deliveries earn `Person
 These pickup rewards do not credit the transport driver for collection; its delivery reward is earned when resources reach the refinery.
 AI-only work earns no personal driver reward.
 
-Credits require the compatible active King of the Hill wallet API. They are separate from the team's resource pool and normal round score.
+Credits require a compatible active wallet API: King of the Hill's, or Si_Buy's when King of the Hill does not provide one. They are separate from the team's resource pool and normal round score.
 Earned credit amounts accumulate per connected player, retaining fractional credit between batches.
 `DeliveryCooldownSeconds` sets the delay for a new payout window; later earnings do not push an existing due time back.
 Rate changes affect newly earned rewards. Cooldown changes affect new payout windows and new delivery cooldowns, not timers already scheduled.
@@ -165,6 +178,31 @@ Starting tiers and re-reaching a lost tier earn nothing; a multi-tier jump earns
 Deposit fractions are kept per rule, commander and team; reload, disabling commander scoring, disconnect and round reset clear them.
 Deposits include autonomous and player deliveries through the observed refinery paths.
 Team-credit grants and harvester-to-transport pickups do not count as refinery deposits.
+
+## Wasp harvest
+
+The master switch and `WaspHarvest.Enabled` must both be enabled. Wasp harvest is server-only; clients need no mod.
+A player-flown Wasp harvests Biotics the way the Shrimp does. Each creature named in `WaspHarvest.Units` (default `Wasp`) receives the Shrimp's two native harvesting components, a cargo holder and mining claws, on the server when it spawns.
+They are added to the spawned instance after its networked scripts are registered, so no additional network data is produced and clients see a vanilla Wasp.
+A creature that already carries these components, or has no primary attack, is left untouched.
+
+A primary-attack hit extracts `ExtractPerHit` Biotics within `ExtractionRadius` of the hit point when a player controls the Wasp, the cargo has room and the hit point is at most `GroundMaxHeight` above terrain or static ground.
+AI-controlled Wasps never extract. A hit that finds no Biotics remains a normal attack. Extraction uses the native patch call, so the patch is debited exactly as for a Shrimp.
+Extraction is server-side while melee damage is evaluated by the client, so a harvesting swing can still damage what it hits.
+
+To unload, the Wasp must hold still inside a friendly resource deposit point. Among the alien structures only the Bio Cache has one; the Nest does not.
+The native deposit tick moves `DepositAmount` Biotics every `TickSeconds`, limited by remaining team storage. The team receives the full amount.
+With `DepositCooldownSeconds` above zero, a visit begins at its first deposit tick and unloads at most `MaxCarry`; the next visit can begin once the cooldown has elapsed since that start. Zero removes both limits.
+
+A visit closes when the cargo is empty, the load is used up or deposit ticks have stopped for about three ticks.
+The pilot's `RewardShare` of the delivered amount then joins the batched personal-credit payout described below, with the same wallet, payout delay, fractional carry and match limits.
+A delivery made while nobody controls the Wasp pays nobody, and a visit still open when the match ends is not rewarded. Wasp deliveries award no round score and do not count for commander `BalteriumDeposited` rules.
+The pilot sees a cargo bar while harvesting and unloading, at most one line per `NotifyIntervalSeconds`, plus cargo-full, too-high, cooldown and delivery messages.
+
+Setting changes apply to Wasps already in the field. While a switch is off, equipped Wasps keep their cargo and can still unload it, but cannot extract; Wasps spawned meanwhile are not equipped.
+At match end the added components are removed from surviving units. `/wasp` totals cover the current round.
+The standalone `Si_WaspHarvest.dll` provides the same feature and command. When it is loaded, the built-in Wasp harvest stays off and `/logistics` reports the conflict; use only one of the two.
+Mods that scan units for resource holders will also see equipped Wasps.
 
 ## Harvester coordination
 
@@ -378,3 +416,10 @@ Run `/logistics status` with debug enabled before moving a stalled vehicle so it
 4. Check player harvester deposits, player transport deposits and player-to-player pickups against the separate 7%/9%/6% credit shares and 2/1 round-score rates. Repeat with zero cooldown, full storage and unavailable wallet; confirm actual accepted amounts and fractional carry.
 5. Check Move/Stop, player takeover, disabling/re-enabling, missing refineries, no productive patches and blocked paths. Cargo and manual control should remain consistent.
 6. Check start/stop sounds, progress interval zero and nonzero, payout announcements and optional ModUI permissions. Compare equivalent populated matches before drawing performance conclusions.
+
+### Wasp harvest checks
+
+1. Fly a Wasp over a Biotics patch and attack the ground. Confirm the cargo bar, the patch amount dropping, the cargo-full message at 500 and no extraction above 4m or by an AI-controlled Wasp.
+2. Hover still inside a Bio Cache. Confirm 50 Biotics per second reach the team, the delivery message, the 40% credit share in the next payout and the 30-second cooldown on an immediate second visit. Confirm the Nest accepts nothing.
+3. Change a setting with `/wasp set` while a Wasp is airborne and confirm it applies to that Wasp. Toggle Wasp harvest and the master switch; carried cargo should still unload.
+4. Join with an unmodded client and confirm the Wasp looks and attacks as usual. Confirm Shrimp harvesting and harvester refinery rewards are unchanged.

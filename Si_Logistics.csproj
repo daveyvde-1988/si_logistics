@@ -18,6 +18,10 @@
     <Compile Include="HarvesterFix.cs" />
     <Compile Include="AITransport.cs" />
     <Compile Include="AITransportAllocation.cs" />
+    <Compile Include="WaspHarvest.cs" />
+    <Compile Include="WaspHarvestInjector.cs" />
+    <Compile Include="WaspHarvestPatches.cs" />
+    <Compile Include="WaspHarvestCommands.cs" />
     <Reference Include="0Harmony"><HintPath>$(ServerRoot)\MelonLoader\net35\0Harmony.dll</HintPath><Private>False</Private></Reference>
     <PackageReference Include="LavaGang.MelonLoader" Version="0.7.0" />
     <Reference Include="SilicaCore"><HintPath>SilicaCore.dll</HintPath><Private>False</Private></Reference>

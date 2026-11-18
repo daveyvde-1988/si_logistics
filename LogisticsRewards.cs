@@ -83,6 +83,7 @@ namespace Si_Logistics
         private static void BindRewardEvents()
         {
             BindCommanderScoreEvents();
+            BindWaspHarvestEvents();
             GameEvents.OnGameStarted -= LogisticsMatchStarted; GameEvents.OnGameStarted += LogisticsMatchStarted;
             GameEvents.OnGameEnded -= LogisticsMatchEnded; GameEvents.OnGameEnded += LogisticsMatchEnded;
             GameEvents.OnPlayerLeft -= LogisticsPlayerLeft; GameEvents.OnPlayerLeft += LogisticsPlayerLeft;
@@ -105,6 +106,8 @@ namespace Si_Logistics
         public override void OnDeinitializeMelon()
         {
             UnbindCommanderScoreEvents();
+            UnbindWaspHarvestEvents();
+            ResetWaspHarvest();
             ResetAITransports(true);
             ResetHarvesterFix(true);
             ResetCommanderScore(); RewardEpoch++; MatchAcceptsRewards = false; Rewards.Clear(); ScoreRewards.Clear(); NextRewardCheck = float.PositiveInfinity; TransportErrorUntil.Clear(); CargoByTransport.Clear();

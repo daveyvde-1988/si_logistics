@@ -160,5 +160,20 @@
     "TransferWaitingTimeSeconds": 120.0,
     "ReservationCheckTimeSeconds": 10.0,
     "ReservationDistanceIncrementMetres": 50.0
+  },
+  "WaspHarvest": {
+    "Enabled": true,
+    "Units": [
+      "Wasp"
+    ],
+    "MaxCarry": 500,
+    "ExtractPerHit": 20,
+    "ExtractionRadius": 3.0,
+    "TickSeconds": 1.0,
+    "DepositAmount": 50,
+    "DepositCooldownSeconds": 30.0,
+    "RewardShare": 0.4,
+    "GroundMaxHeight": 4.0,
+    "NotifyIntervalSeconds": 2.0
   }
 }
