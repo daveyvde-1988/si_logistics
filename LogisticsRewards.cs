@@ -292,14 +292,53 @@ namespace Si_Logistics
             __state = null;
             if (WaspByClaws.Count != 0 && WaspByClaws.TryGetValue(__instance.GetInstanceID(), out var wasp))
             {
-                if (!WaspHarvestActive || !MatchAcceptsRewards || !wasp.Alive || !WaspCanUnload(wasp) ||
+                if (!WaspHarvestActive || !MatchAcceptsRewards || !wasp.Alive ||
                     (wasp.Holder.AmountStored == 0 && !wasp.Unit.GetLocallyControlled())) return false;
+                if (!wasp.Unit.ControlledBy && WaspJobs.TryGetValue(wasp.UnitId, out var job))
+                {
+                    // A managed Wasp uses the cache hover transfer for its whole job.
+                    // The native landing-zone path would otherwise attempt a second deposit.
+                    TryWaspHoverDeposit(job);
+                    return false;
+                }
+                if (!WaspCanUnload(wasp)) return false;
                 __state = BeginDeposit(wasp.Unit, wasp.Holder, wasp);
                 return true;
             }
             __state = BeginDeposit(__instance.Creature, __instance.ResourceHolder);
             return true;
         }
+
+        private static void TryWaspHoverDeposit(WaspJob job)
+        {
+            if (!WaspAIHarvestActive || job.Leg != WaspLeg.Unload) return;
+            float now = Time.time;
+            if (now < job.NextUnload || job.State.Unit.Team != job.Team || !WaspCanHoverUnload(job)) return;
+            job.NextUnload = now + Cfg.WaspHarvest.TickSeconds;
+
+            var state = job.State;
+            int requested = Math.Min(state.Claws.DepositAmount, job.Team.RemainingResourceCapacity);
+            if (requested <= 0) return;
+            var receipt = BeginDeposit(state.Unit, state.Holder, state);
+            Exception failure = null;
+            try
+            {
+                int removed = ObservedRetrieve(state.Holder, requested);
+                if (removed <= 0) return;
+                var resource = state.Holder.ResourceType;
+                int remainder = ObservedStructureStore(job.Cache.Structure, resource, removed);
+                if (remainder > 0 && resource == job.Team.UsableResource)
+                    remainder = ObservedTeamStore(job.Team, remainder);
+                job.Team.OnExtractedResourcesStored(removed - remainder);
+            }
+            catch (Exception error)
+            {
+                failure = error;
+                WaspWarn("hover-deposit", "Wasp hover unload: " + error.GetBaseException().Message);
+            }
+            finally { DepositFinished(failure, receipt); }
+        }
+
         private static DepositReceipt BeginDeposit(Unit unit, ResourceHolder holder, WaspState wasp = null)
         {
             if (DepositReceiptPool == null) DepositReceiptPool = new Stack<DepositReceipt>();

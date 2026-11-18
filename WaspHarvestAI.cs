@@ -20,9 +20,13 @@ namespace Si_Logistics
             internal uint OrderId;
             internal WaspLeg Leg;
             internal Vector3 Goal;
+            internal Vector3 FlightVelocity;
+            internal Vector3? MiningAim;
             internal float NextStep, Deadline, LastGain;
+            internal float NextLandingTrace;
+            internal float NextUnload;
             internal int LastCargo;
-            internal bool Landing, PreviousForceLand;
+            internal bool Landing;
         }
 
         private static readonly Dictionary<int, WaspJob> WaspJobs = new Dictionary<int, WaspJob>();
@@ -34,7 +38,12 @@ namespace Si_Logistics
         private static HarmonyLib.Harmony WaspOrderHarmony;
         private static Action<AIOrderProcessor> WaspClearOrders;
         private static Func<ResourceArea, Vector3, int, float, int> WaspExtractFromArea;
+        private static Func<Player> WaspGetRequestSender;
+        private static Action<AIAiming, Vector3> WaspSetGroundAim;
+        private static Action<AIAiming> WaspClearGroundAim;
+        private static Func<AIAiming, Vector3> WaspGetGroundAim;
         private static bool WaspOrdersInstalled;
+        private static bool WaspAIHarvestActive => WaspHarvestActive && WaspOrdersInstalled && Cfg.WaspHarvest.AIHarvest;
         private static float WaspNextJobTick, WaspNextOccupancy;
         [ThreadStatic] private static Vector3? WaspCommanderClick;
         [ThreadStatic] private static bool WaspIssuingOrder;
@@ -54,8 +63,28 @@ namespace Si_Logistics
                     throw new MissingMethodException("ResourceArea.ExtractResource(Vector3, int, float)");
                 WaspExtractFromArea = (Func<ResourceArea, Vector3, int, float, int>)areaExtract.CreateDelegate(
                     typeof(Func<ResourceArea, Vector3, int, float, int>));
+                // The project reference predates ground aiming. Cache the current server's native methods.
+                var setAim = AccessTools.DeclaredMethod(typeof(AIAiming), "SetGroundAim", new[] { typeof(Vector3) });
+                var clearAim = AccessTools.DeclaredMethod(typeof(AIAiming), "ClearGroundAim", Type.EmptyTypes);
+                var getAim = AccessTools.DeclaredPropertyGetter(typeof(AIAiming), "GroundAimPosition");
+                if (setAim == null || clearAim == null || getAim == null)
+                    throw new MissingMethodException("AIAiming ground aim methods");
+                WaspSetGroundAim = (Action<AIAiming, Vector3>)setAim.CreateDelegate(typeof(Action<AIAiming, Vector3>));
+                WaspClearGroundAim = (Action<AIAiming>)clearAim.CreateDelegate(typeof(Action<AIAiming>));
+                WaspGetGroundAim = (Func<AIAiming, Vector3>)getAim.CreateDelegate(typeof(Func<AIAiming, Vector3>));
+                var requestSender = AccessTools.DeclaredMethod(typeof(NetworkLayer), "GetRequestSender", Type.EmptyTypes);
+                if (requestSender != null && requestSender.IsStatic && requestSender.ReturnType == typeof(Player))
+                    WaspGetRequestSender = (Func<Player>)requestSender.CreateDelegate(typeof(Func<Player>));
                 WaspOrderHarmony.Patch(AccessTools.DeclaredMethod(typeof(MiningClaws), nameof(MiningClaws.OnExtractAttackHit)),
                     transpiler: new HarmonyMethod(typeof(LogisticsMod), nameof(ObserveWaspExtraction)));
+                var fixedUpdate = AccessTools.DeclaredMethod(typeof(CreatureDecapod), nameof(CreatureDecapod.OrderedFixedUpdate),
+                    new[] { typeof(float) }) ?? throw new MissingMethodException("CreatureDecapod.OrderedFixedUpdate(float)");
+                if (AccessTools.DeclaredField(typeof(CreatureDecapod), "m_InputMovement")?.FieldType != typeof(Vector3) ||
+                    AccessTools.DeclaredField(typeof(CreatureDecapod), "m_fFlyPitch")?.FieldType != typeof(float))
+                    throw new MissingFieldException("CreatureDecapod flight input fields");
+                WaspOrderHarmony.Patch(fixedUpdate,
+                    prefix: new HarmonyMethod(typeof(LogisticsMod), nameof(BeginWaspFlightInput)),
+                    finalizer: new HarmonyMethod(typeof(LogisticsMod), nameof(EndWaspFlightInput)));
                 WaspOrderHarmony.Patch(processor,
                     prefix: new HarmonyMethod(typeof(LogisticsMod), nameof(WaspOrderBefore)),
                     postfix: new HarmonyMethod(typeof(LogisticsMod), nameof(WaspOrderAfter)) { priority = HarmonyLib.Priority.First });
@@ -95,22 +124,22 @@ namespace Si_Logistics
 
         private static void WaspLogisticsBusy(Unit __0, ref bool __result)
         {
-            if (!__result && WaspHarvestActive && WaspJobs.Count != 0 && __0)
+            if (!__result && WaspAIHarvestActive && WaspJobs.Count != 0 && __0)
                 __result = WaspJobs.ContainsKey(__0.GetInstanceID());
         }
 
-        private static void WaspCommanderMove(Vector3 __1, Target __2, bool __4, bool __6, bool __7,
+        private static void WaspCommanderMove(Vector3 __1, bool __4, bool __6, bool __7,
             OrderDefinition __8, out Vector3? __state)
         {
             __state = WaspCommanderClick;
-            WaspCommanderClick = WaspHarvestActive && !__2 && !__4 && !__6 && !__7 &&
+            WaspCommanderClick = WaspAIHarvestActive && !__4 && !__6 && !__7 &&
                 (!__8 || __8 is MoveOrderDefinition) ? __1 : (Vector3?)null;
         }
 
         private static void WaspCommandCardMove(OrderDefinition __0, IReadOnlyList<Vector3> __2, bool __5, out Vector3? __state)
         {
             __state = WaspCommanderClick;
-            WaspCommanderClick = WaspHarvestActive && __0 is MoveOrderDefinition && !__5 && __2 != null && __2.Count > 0
+            WaspCommanderClick = WaspAIHarvestActive && __0 is MoveOrderDefinition && !__5 && __2 != null && __2.Count > 0
                 ? __2[0] : (Vector3?)null;
         }
 
@@ -121,27 +150,39 @@ namespace Si_Logistics
         }
 
         private static bool WaspOrderBefore(AIOrderProcessor __instance, OrderIssueParams __2) =>
-            WaspIssuingOrder || !__2.CalledByAI || !WaspHarvestActive || WaspJobs.Count == 0 ||
+            WaspIssuingOrder || !__2.CalledByAI || !WaspAIHarvestActive || WaspJobs.Count == 0 ||
             !__instance.Owner || !WaspJobs.ContainsKey(__instance.Owner.GetInstanceID());
 
-        private static void WaspOrderAfter(AIOrderProcessor __instance, OrderDefinition __0, OrderIssueParams __2, bool __result)
+        private static void WaspOrderAfter(AIOrderProcessor __instance, OrderIssueParams __2, bool __result)
         {
-            if (WaspIssuingOrder || !__result || __2.CalledByAI || !WaspHarvestActive ||
+            if (WaspIssuingOrder || !__result || __2.CalledByAI || !WaspAIHarvestActive ||
                 !MatchAcceptsRewards || WaspByUnit.Count == 0 || !(__instance.Owner is CreatureDecapod unit) ||
                 !WaspByUnit.TryGetValue(unit.GetInstanceID(), out var state)) return;
             try
             {
                 // Preserve accepted replacement and queued orders. They relinquish the harvest job.
                 CancelWaspJob(state.UnitId, false);
-                if (!WaspOrdersInstalled || !WaspCommanderClick.HasValue || __2.QueueOrder ||
-                    !(__0 is MoveOrderDefinition) || !CanRunWaspJob(state) ||
-                    !(__instance.Orders.Count > 0 && __instance.Orders[0] is AIMoveOrder)) return;
-                var area = ResourceArea.GetResourceAreaAtPosition(unit.Team, state.Holder.ResourceType, WaspCommanderClick.Value);
-                if (!area) return;
+                if (__2.QueueOrder ||
+                    !(__instance.Orders.Count > 0 && __instance.Orders[0] is AIMoveOrder move)) return;
+                var click = WaspCommanderClick;
+                if (!click.HasValue && __2.BroadcastEvent)
+                {
+                    var sender = WaspGetRequestSender?.Invoke();
+                    if (sender && sender.IsCommander && sender.Team == unit.Team) click = move.WorldPosition;
+                }
+                if (!click.HasValue) return;
+                var area = ResourceArea.GetResourceAreaAtPosition(unit.Team, state.Holder.ResourceType, click.Value);
+                if (!area || !CanRunWaspJob(state))
+                {
+                    if (Cfg.Debug) DebugMsg($"Wasp harvest AI {state.UnitId}: no job for Move at {click.Value}. " +
+                        $"Discovered patch={!!area}, ground={unit.GroundEnabled}, melee={unit.AttackPrimary?.IsMelee}, AI={unit.AIControlled}.");
+                    return;
+                }
                 var job = new WaspJob { State = state, Team = unit.Team, FirstArea = area };
                 CaptureWaspOrder(job);
                 WaspJobs.Add(state.UnitId, job);
                 WaspNextOccupancy = 0f;
+                if (Cfg.Debug) DebugMsg($"Wasp harvest AI {state.UnitId}: started a job at {click.Value}.");
             }
             catch (Exception error) { WaspWarn("ai-order", "Wasp harvest order: " + error.Message); }
         }
@@ -153,13 +194,14 @@ namespace Si_Logistics
         }
 
         private static bool CanRunWaspJob(WaspState state) =>
-            state.Alive && !state.Unit.IsDestroyed && state.Unit.IsFlyingType && state.Unit.Team &&
+            state.Alive && !state.Unit.IsDestroyed && state.Unit.IsFlyingType && state.Unit.GroundEnabled &&
+            state.Unit.AttackPrimary?.IsMelee == true && state.Unit.Team &&
             state.Unit.AIControlled && !state.Unit.ControlledBy && !state.Unit.PlayerControlled &&
             !state.Unit.GetRemotelyControlled() && !state.Unit.InCompartment && state.Unit.AIAgent && state.Unit.OrderAgent;
 
         private static void UpdateWaspJobs(float now)
         {
-            if (WaspJobs.Count == 0 || now < WaspNextJobTick) return;
+            if (WaspJobs.Count == 0 || !WaspAIHarvestActive || now < WaspNextJobTick) return;
             WaspNextJobTick = now + 0.25f;
             if (now >= WaspNextOccupancy)
             {
@@ -263,7 +305,7 @@ namespace Si_Logistics
                 WaspReservations.Add(area, job);
                 job.Area = area;
                 var cell = area.GetNearestResourceCell(state.Claws.GetExtractionPoint());
-                if (!FlyWaspTo(job, cell, WaspLeg.ToPatch, now)) FailWaspPatch(job, now);
+                if (!MoveWaspTo(job, cell, WaspLeg.ToPatch, now)) FailWaspPatch(job, now);
                 return;
             }
 
@@ -278,24 +320,39 @@ namespace Si_Logistics
                 if (job.Leg == WaspLeg.ToPatch)
                 {
                     float radius = Mathf.Max(state.Claws.ExtractionRadius, unit.AIAgent.FinalWaypointThreshold + 1f);
-                    if (!LandWasp(job, position, radius)) return;
+                    if (!LandWasp(job, position, radius, now)) return;
                     job.Leg = WaspLeg.Harvest;
                     job.LastCargo = holder.AmountStored;
                     job.LastGain = now;
                     job.Deadline = float.PositiveInfinity;
-                    state.Claws.SetMining(true);
+                    AimWaspAtCell(job, job.Area.GetNearestResourceCell(state.Claws.GetExtractionPoint()));
                 }
-                if (holder.AmountStored > job.LastCargo) { job.LastCargo = holder.AmountStored; job.LastGain = now; }
+                bool grounded = WaspHasLanded(unit);
+                state.Claws.SetMining(grounded);
+                if (holder.AmountStored > job.LastCargo)
+                {
+                    if (Cfg.Debug && job.LastCargo == 0)
+                        DebugMsg($"Wasp harvest AI {state.UnitId}: first melee harvest, {holder.AmountStored} Biotics aboard.");
+                    job.LastCargo = holder.AmountStored;
+                    job.LastGain = now;
+                }
                 if (now - job.LastGain < 5f) return;
 
-                // The forward attack point can miss after a patch is partly depleted. Aim the
-                // next approach at a live cell and offset the body by the claw's current reach.
+                // Turn to new cells as nearby ones run out. If turning did not help, walk
+                // closer on a short route instead of taking off for another landing.
                 var hit = state.Claws.GetExtractionPoint();
                 var cell = job.Area.GetNearestResourceCell(hit);
+                if (grounded && AimWaspAtCell(job, cell))
+                {
+                    job.LastGain = now;
+                    return;
+                }
                 var offset = hit - position;
                 offset.y = 0;
-                if (WaspDistanceSquared(job.Goal, cell - offset) <= 1f ||
-                    !FlyWaspTo(job, cell - offset, WaspLeg.ToPatch, now, false)) FailWaspPatch(job, now);
+                var goal = cell - offset;
+                if (WaspDistanceSquared(position, goal) <= 1f ||
+                    !MoveWaspTo(job, goal, WaspLeg.ToPatch, now, longRange: false, walk: grounded))
+                    FailWaspPatch(job, now);
                 return;
             }
 
@@ -306,68 +363,136 @@ namespace Si_Logistics
                 job.Leg = WaspLeg.Seek;
                 return;
             }
-            if (!WaspCacheValid(job) || (job.Leg == WaspLeg.ToCache && now >= job.Deadline))
+            if (!WaspCacheValid(job) || now >= job.Deadline ||
+                !InTransferRange(job.Cache.transform.position, job.Goal, Cfg.WaspHarvest.AIUnloadRange))
             {
                 var previous = job.Cache;
-                job.Cache = FindWaspCache(job, position, previous);
                 StopWaspOrder(job);
                 ClearWaspLanding(job);
-                if (!job.Cache || !FlyWaspTo(job, job.Cache.transform.position, WaspLeg.ToCache, now))
+                job.Cache = FindWaspCache(job, position, previous, out var hover);
+                if (job.Cache)
                 {
-                    job.Cache = null;
-                    job.NextStep = now + 3f;
+                    // Use the cache's ground-level height for the native route. Flight
+                    // control takes over for the final approach to the reserved altitude.
+                    var routePoint = new Vector3(hover.x, job.Cache.transform.position.y, hover.z);
+                    if (MoveWaspTo(job, routePoint, WaspLeg.ToCache, now))
+                    {
+                        job.Goal = hover;
+                        return;
+                    }
                 }
+                job.Cache = null;
+                job.Leg = WaspLeg.ToCache;
+                job.NextStep = now + 3f;
                 return;
             }
             if (job.Leg == WaspLeg.ToCache)
             {
-                float radius = Mathf.Max(1f, job.Cache.DepositRadius * 0.7f);
-                if (!LandWasp(job, position, radius)) return;
+                float approach = WaspFlightApproachRange(unit);
+                if (WaspDistanceSquared(position, job.Goal) > approach * approach) return;
+                StopWaspOrder(job);
                 job.Leg = WaspLeg.Unload;
-                job.Deadline = now + 10f;
+                job.NextUnload = now;
+                job.Deadline = now + 20f;
             }
-            if (!unit.IsFlying && unit.IsGrounded &&
-                (position - job.Cache.transform.position).sqrMagnitude < job.Cache.DepositRadius * job.Cache.DepositRadius &&
-                job.Team.GetResourceDepositPoint(holder.ResourceType, position))
-            {
-                // Keep this cache and wait while storage is full or the unload cooldown is active.
+
+            if (!unit.IsFlying) unit.Fly(true);
+            job.FlightVelocity = Vector3.ClampMagnitude((job.Goal - position) * 1.5f, 8f);
+            if (WaspCanHoverUnload(job))
                 job.Deadline = now + 10f;
-                return;
-            }
-            if (now >= job.Deadline) BeginWaspReturn(job);
         }
 
-        private static ResourceDepositPoint FindWaspCache(WaspJob job, Vector3 position, ResourceDepositPoint previous)
+        private static ResourceDepositPoint FindWaspCache(WaspJob job, Vector3 position, ResourceDepositPoint previous,
+            out Vector3 hover)
         {
             ResourceDepositPoint best = null, fallback = null;
+            hover = Vector3.zero;
+            Vector3 fallbackHover = Vector3.zero;
             float distance = float.PositiveInfinity;
             foreach (var structure in job.Team.Structures)
             {
-                if (!structure || structure.IsDestroyed || structure.IsSold) continue;
+                if (!structure || structure.Team != job.Team || structure.IsDestroyed || structure.IsSold) continue;
                 foreach (var cache in structure.ResourceDepositPoints)
                 {
                     if (!cache || cache.ResourceType != job.State.Holder.ResourceType) continue;
-                    if (cache == previous) { fallback = cache; continue; }
-                    float candidate = WaspDistanceSquared(position, cache.transform.position);
-                    if (candidate >= distance) continue;
-                    distance = candidate;
+                    if (!TryGetWaspHoverPoint(job, cache.transform.position, position, out var point)) continue;
+                    if (cache == previous)
+                    {
+                        fallback = cache;
+                        fallbackHover = point;
+                        continue;
+                    }
+                    float score = (point - position).sqrMagnitude;
+                    if (score >= distance) continue;
+                    distance = score;
                     best = cache;
+                    hover = point;
                 }
             }
-            return best ? best : fallback;
+            if (best) return best;
+            hover = fallbackHover;
+            return fallback;
+        }
+
+        private static bool TryGetWaspHoverPoint(WaspJob job, Vector3 center, Vector3 position, out Vector3 hover)
+        {
+            hover = Vector3.zero;
+            float best = float.PositiveInfinity;
+            float bodyRadius = Mathf.Max(1f, job.State.Unit.PhysicalRadius);
+            int mask = GamePhysics.TRACELAYERMASK_IGNOREDEBRISANDUNITS.value;
+            float range = Cfg.WaspHarvest.AIUnloadRange;
+            // Stagger the upper ring so arrivals at the same cache can use both heights.
+            for (int ring = 0; ring < 2; ring++)
+            {
+                float radius = range * (ring == 0 ? 10f / 15f : 8f / 15f);
+                float height = Mathf.Min(1f, range / 15f) * (ring == 0 ? 7f : 11f);
+                for (int slot = 0; slot < 8; slot++)
+                {
+                    float angle = (slot + ring * 0.5f) * Mathf.PI / 4f;
+                    var point = center + new Vector3(radius * Mathf.Cos(angle), height, radius * Mathf.Sin(angle));
+                    float distance = (point - position).sqrMagnitude;
+                    if (distance >= best) continue;
+                    bool occupied = false;
+                    foreach (var other in WaspJobs.Values)
+                    {
+                        if (other == job || !other.Cache || !other.State.Unit) continue;
+                        float separation = bodyRadius + Mathf.Max(1f, other.State.Unit.PhysicalRadius) + 1f;
+                        if ((other.Goal - point).sqrMagnitude >= separation * separation) continue;
+                        occupied = true;
+                        break;
+                    }
+                    if (occupied || Physics.CheckSphere(point, bodyRadius, mask, QueryTriggerInteraction.Ignore)) continue;
+                    best = distance;
+                    hover = point;
+                }
+            }
+            return best < float.PositiveInfinity;
         }
 
         private static bool WaspCacheValid(WaspJob job) =>
-            job.Cache && job.Cache.Structure && job.Cache.Structure.Team == job.Team &&
+            job.Cache && job.Cache.ResourceType == job.State.Holder.ResourceType &&
+            job.Cache.Structure && job.Cache.Structure.Team == job.Team &&
             !job.Cache.Structure.IsDestroyed && !job.Cache.Structure.IsSold;
 
-        private static bool FlyWaspTo(WaspJob job, Vector3 goal, WaspLeg leg, float now, bool longRange = true)
+        private static bool WaspCanHoverUnload(WaspJob job)
+        {
+            var unit = job.State.Unit;
+            if (!unit.IsFlying || unit.IsAttacking || !unit.RigidBody || !WaspCacheValid(job)) return false;
+            Vector3 position = unit.transform.position;
+            return InTransferRange(job.Cache.transform.position, position, Cfg.WaspHarvest.AIUnloadRange) &&
+                unit.RigidBody.linearVelocity.sqrMagnitude <= 16f;
+        }
+
+        private static float WaspFlightApproachRange(CreatureDecapod unit) => Mathf.Clamp(unit.FlyMoveSpeed * 0.6f, 12f, 40f);
+
+        private static bool MoveWaspTo(WaspJob job, Vector3 goal, WaspLeg leg, float now, bool longRange = true, bool walk = false)
         {
             ClearWaspLanding(job);
+            ClearWaspMiningAim(job);
             job.State.Claws.SetMining(false);
             var unit = job.State.Unit;
             var target = new OrderTarget(goal);
-            var parameters = OrderIssueParams.SelfDirected(AgentMoveSpeed.Fast);
+            var parameters = OrderIssueParams.SelfDirected(walk ? AgentMoveSpeed.Stealth : AgentMoveSpeed.Fast);
             parameters.LongRange = longRange;
             WaspIssuingOrder = true;
             try
@@ -383,25 +508,137 @@ namespace Si_Logistics
             return true;
         }
 
-        private static bool LandWasp(WaspJob job, Vector3 position, float radius)
+        private static bool LandWasp(WaspJob job, Vector3 position, float radius, float now)
         {
+            var unit = job.State.Unit;
+            var offset = job.Goal - position;
+            offset.y = 0f;
+            float distance = offset.magnitude;
             if (!job.Landing)
             {
-                if (WaspDistanceSquared(position, job.Goal) > radius * radius) return false;
+                // A fast Wasp can cross the touchdown radius entirely between job ticks.
+                // Take over the final approach early enough to brake and line up.
+                float entry = unit.IsFlying ? Mathf.Max(radius, WaspFlightApproachRange(unit)) : radius;
+                if (distance > entry) return false;
                 StopWaspOrder(job);
-                job.PreviousForceLand = job.State.Unit.ForceLand;
-                job.State.Unit.ForceLand = true;
                 job.Landing = true;
-                if (job.State.Unit.RigidBody) job.State.Unit.RigidBody.WakeUp();
+                job.Deadline = now + 25f;
+                job.NextLandingTrace = now;
+                if (Cfg.Debug) DebugMsg($"Wasp harvest AI {job.State.UnitId}: approaching {job.Leg} from {distance:0.0} m.");
             }
-            return !job.State.Unit.IsFlying && job.State.Unit.IsGrounded;
+            if (WaspHasLanded(unit))
+            {
+                if (distance > radius)
+                {
+                    if (!MoveWaspTo(job, job.Goal, job.Leg, now, longRange: false, walk: true)) job.Deadline = now;
+                    return false;
+                }
+                ClearWaspLanding(job);
+                if (Cfg.Debug) DebugMsg($"Wasp harvest AI {job.State.UnitId}: touched down on {job.Leg}.");
+                return true;
+            }
+            job.FlightVelocity = Vector3.zero;
+            if (!unit.IsFlying || !unit.SphereCollider) return false;
+            float latchSpeed = unit.FlyLatchSpeed;
+            float maxApproachSpeed = Mathf.Clamp(latchSpeed * 0.45f, 1f, 10f);
+            job.FlightVelocity = Vector3.ClampMagnitude(offset * 1.5f, maxApproachSpeed);
+            if (distance > radius)
+            {
+                if (Cfg.Debug && now >= job.NextLandingTrace)
+                    TraceWaspLanding(job, now, $"aligning, {distance:0.0} m from goal");
+                return false;
+            }
+            var body = unit.SphereCollider.bounds;
+            int mask = GamePhysics.TRACELAYERMASK_IGNOREDEBRISANDUNITS.value;
+            if (!Physics.Raycast(body.center, Vector3.down, out var surface, 1500f, mask, QueryTriggerInteraction.Ignore) ||
+                surface.collider.CompareTag("NotWalkable") ||
+                surface.normal.y < Mathf.Cos(unit.MaxSlopeAngle * Mathf.Deg2Rad))
+            {
+                TraceWaspLanding(job, now, "no walkable surface below");
+                return false;
+            }
+
+            // Keep the contact speed within the creature's native latch limit.
+            float clearance = Mathf.Max(0f, surface.distance - body.extents.y);
+            job.FlightVelocity.y = -Mathf.Min(Mathf.Max(0.6f, clearance * 0.6f), Mathf.Min(4f, latchSpeed * 0.45f));
+            var velocity = unit.RigidBody.linearVelocity;
+            if (clearance <= 0.3f && velocity.sqrMagnitude <= 9f && unit.GetLocallyOwned())
+            {
+                // At the surface the native flight toggle can finish the last part of touchdown.
+                // Mining still waits until native physics records actual ground contact.
+                unit.Fly(false);
+                job.FlightVelocity = Vector3.zero;
+            }
+            if (Cfg.Debug && now >= job.NextLandingTrace)
+                TraceWaspLanding(job, now, $"clearance={clearance:0.0} m, vertical speed={velocity.y:0.0} m/s, flying={unit.IsFlying}");
+            return false;
+        }
+
+        private static void TraceWaspLanding(WaspJob job, float now, string message)
+        {
+            if (!Cfg.Debug || now < job.NextLandingTrace) return;
+            job.NextLandingTrace = now + 4f;
+            DebugMsg($"Wasp harvest AI {job.State.UnitId}: {job.Leg} landing, {message}.");
         }
 
         private static void ClearWaspLanding(WaspJob job)
         {
-            if (!job.Landing) return;
-            if (job.State.Unit && job.State.Unit.ForceLand) job.State.Unit.ForceLand = job.PreviousForceLand;
             job.Landing = false;
+            job.FlightVelocity = Vector3.zero;
+        }
+
+        private static bool WaspHasLanded(CreatureDecapod unit) =>
+            !unit.IsFlying && !unit.IsPhysicsFalling && unit.GetGroundPoint() != Vector3.zero;
+
+        private static void BeginWaspFlightInput(CreatureDecapod __instance, float ___m_fFlyPitch,
+            ref Vector3 ___m_InputMovement, out Vector3? __state)
+        {
+            __state = null;
+            if (WaspJobs.Count == 0 || !WaspAIHarvestActive || !__instance.IsFlying ||
+                !WaspJobs.TryGetValue(__instance.GetInstanceID(), out var job) || (!job.Landing && job.Leg != WaspLeg.Unload) ||
+                !CanRunWaspJob(job.State)) return;
+
+            // Convert the approach from world coordinates into the same pitched frame
+            // that the creature's own flight physics uses.
+            var rotation = __instance.GetBodyRotation(excludeFlyPitch: true);
+            if (___m_fFlyPitch != 0f)
+                rotation = GameMath.GetRotatedQuaternion(rotation, Vector3.right * ___m_fFlyPitch);
+            var desired = Quaternion.Inverse(rotation) * job.FlightVelocity;
+            float speed = Mathf.Max(0.01f, __instance.FlyMoveSpeed);
+            float side = Mathf.Max(0.01f, speed * __instance.FlyMoveScaleSide);
+            float forward = desired.z < 0f ? Mathf.Max(0.01f, speed * __instance.FlyMoveScaleBack) : speed;
+            __state = ___m_InputMovement;
+            ___m_InputMovement = Vector3.ClampMagnitude(new Vector3(desired.x / side, desired.z / forward, desired.y / side), 1f);
+        }
+
+        private static Exception EndWaspFlightInput(ref Vector3 ___m_InputMovement, Vector3? __state, Exception __exception)
+        {
+            if (__state.HasValue) ___m_InputMovement = __state.Value;
+            return __exception;
+        }
+
+        private static bool AimWaspAtCell(WaspJob job, Vector3 cell)
+        {
+            var aiming = job.State.Unit.AIAgent.AgentAiming;
+            if (!aiming) return false;
+            if (Game.MainTerrain) cell.y = Game.MainTerrain.SampleHeight(cell) + Game.MainTerrain.transform.position.y;
+            if (cell == Vector3.zero || (job.MiningAim.HasValue && job.MiningAim.Value == cell &&
+                WaspGetGroundAim(aiming) == cell)) return false;
+            WaspSetGroundAim(aiming, cell);
+            job.MiningAim = cell;
+            return true;
+        }
+
+        private static void ClearWaspMiningAim(WaspJob job)
+        {
+            if (!job.MiningAim.HasValue) return;
+            var unit = job.State.Unit;
+            if (unit && unit.AIAgent && unit.AIAgent.AgentAiming)
+            {
+                var aiming = unit.AIAgent.AgentAiming;
+                if (WaspGetGroundAim(aiming) == job.MiningAim.Value) WaspClearGroundAim(aiming);
+            }
+            job.MiningAim = null;
         }
 
         private static void CaptureWaspOrder(WaspJob job)
@@ -439,6 +676,7 @@ namespace Si_Logistics
                 WaspReservations.Remove(job.Area);
             job.Area = null;
             job.FirstArea = null;
+            ClearWaspMiningAim(job);
             if (job.State.Claws) job.State.Claws.SetMining(false);
         }
 
@@ -470,19 +708,24 @@ namespace Si_Logistics
         }
 
         private static bool WaspCanExtract(WaspState state, Vector3 position) =>
-            WaspJobs.TryGetValue(state.UnitId, out var job) && job.Leg == WaspLeg.Harvest && CanRunWaspJob(state) &&
-            !state.Unit.IsFlying && state.Unit.IsGrounded && job.Area && !WaspOccupied.Contains(job.Area) &&
-            job.Area.GetPositionInBounds(position) && WaspNearGround(position);
+            WaspAIHarvestActive && WaspJobs.TryGetValue(state.UnitId, out var job) &&
+            job.Leg == WaspLeg.Harvest && CanRunWaspJob(state) &&
+            WaspHasLanded(state.Unit) && job.Area && !WaspOccupied.Contains(job.Area) &&
+            job.Area.GetPositionInBounds(position, state.Claws.ExtractionRadius) && WaspNearGround(position);
 
-        private static bool WaspCanUnload(WaspState state) =>
-            state.Unit.ControlledBy || !WaspJobs.TryGetValue(state.UnitId, out var job) ||
-            (job.Leg == WaspLeg.Unload && WaspCacheValid(job) && !state.Unit.IsFlying && state.Unit.IsGrounded);
+        private static bool WaspCanUnload(WaspState state)
+        {
+            if (state.Unit.ControlledBy) return true;
+            if (!WaspAIHarvestActive) return false;
+            return !WaspJobs.TryGetValue(state.UnitId, out var job) ||
+                (job.Leg == WaspLeg.Unload && WaspCanHoverUnload(job));
+        }
 
         private static int ExtractWaspBiotics(Resource type, Vector3 position, int amount, float radius, MiningClaws claws)
         {
-            if (WaspJobs.Count == 0 || !WaspByClaws.TryGetValue(claws.GetInstanceID(), out var state) || state.Unit.ControlledBy)
+            if (WaspByClaws.Count == 0 || !WaspByClaws.TryGetValue(claws.GetInstanceID(), out var state) || state.Unit.ControlledBy)
                 return ResourceArea.ExtractResource(type, position, amount, radius);
-            if (!WaspHarvestActive || !WaspJobs.TryGetValue(state.UnitId, out var job) || job.Leg != WaspLeg.Harvest || !job.Area)
+            if (!WaspAIHarvestActive || !WaspJobs.TryGetValue(state.UnitId, out var job) || job.Leg != WaspLeg.Harvest || !job.Area)
                 return 0;
             return WaspExtractFromArea(job.Area, position, amount, radius);
         }

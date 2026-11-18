@@ -12,6 +12,7 @@ namespace Si_Logistics
     public sealed class WaspHarvestConfig
     {
         public bool Enabled = true;
+        public bool AIHarvest = true;
         // ObjectInfo.DisplayName of the creatures that receive harvesting claws (case-insensitive).
         public List<string> Units = new List<string> { "Wasp" };
         public int MaxCarry = 500;                  // Biotics per load; also the most one Bio Cache visit unloads
@@ -19,6 +20,7 @@ namespace Si_Logistics
         public float ExtractionRadius = 3f;         // metres around the hit point searched for patch cells
         public float TickSeconds = 1f;              // seconds between native deposit ticks
         public int DepositAmount = 50;              // Biotics moved to the team per deposit tick
+        public float AIUnloadRange = 30f;           // 3D distance from a Bio Cache deposit point
         public float DepositCooldownSeconds = 30f;  // one load per cooldown, counted from the first deposit tick; 0 = off
         public float RewardShare = 0.4f;            // pilot's personal-credit share of a delivery, 0..1
         public float GroundMaxHeight = 4f;          // a hit extracts only this close to terrain or static ground
@@ -95,6 +97,7 @@ namespace Si_Logistics
             c.DepositAmount = Math.Max(1, Math.Min(10000, c.DepositAmount));
             c.ExtractionRadius = ValidHarvestSetting(c.ExtractionRadius, 3f, 0.5f, 50f);
             c.TickSeconds = ValidHarvestSetting(c.TickSeconds, 1f, 0.1f, 60f);
+            c.AIUnloadRange = ValidHarvestSetting(c.AIUnloadRange, 30f, 5f, 100f);
             c.DepositCooldownSeconds = ValidHarvestSetting(c.DepositCooldownSeconds, 30f, 0f, 3600f);
             c.RewardShare = ValidRewardShare(c.RewardShare, 0.4f);
             c.GroundMaxHeight = ValidHarvestSetting(c.GroundMaxHeight, 4f, 0f, 100f);

@@ -29,8 +29,10 @@ namespace Si_Logistics
         // Ranges match ValidateWaspHarvestConfig. UiMax only limits the optional menu's slider.
         private static readonly WaspSetting[] WaspSettings =
         {
-            new WaspSetting { Key = "enabled", Label = "Wasp harvest", Description = "Player-flown Wasps harvest Biotics.", IsBool = true,
+            new WaspSetting { Key = "enabled", Label = "Wasp harvest", Description = "Enable Wasp harvesting and Bio Cache unloading.", IsBool = true,
                 Get = c => c.Enabled ? 1 : 0, Set = (c, v) => c.Enabled = v != 0 },
+            new WaspSetting { Key = "aiharvest", Label = "AI harvest", Description = "Let commanders assign AI Wasps to harvest and deliver Biotics.", IsBool = true,
+                Get = c => c.AIHarvest ? 1 : 0, Set = (c, v) => c.AIHarvest = v != 0 },
             new WaspSetting { Key = "carry", Label = "Wasp cargo capacity", Description = "Biotics per load; also the most one Bio Cache visit unloads.", IsInt = true, Min = 1, Max = 100000, UiMax = 5000, Unit = "Biotics",
                 Get = c => c.MaxCarry, Set = (c, v) => c.MaxCarry = (int)v },
             new WaspSetting { Key = "perhit", Label = "Biotics per hit", Description = "Taken from the patch per extracting hit.", IsInt = true, Min = 1, Max = 10000, UiMax = 500, Unit = "Biotics",
@@ -41,6 +43,8 @@ namespace Si_Logistics
                 Get = c => c.GroundMaxHeight, Set = (c, v) => c.GroundMaxHeight = (float)v },
             new WaspSetting { Key = "deposit", Label = "Unload per tick", Description = "Biotics moved to the team per deposit tick.", IsInt = true, Min = 1, Max = 10000, UiMax = 1000, Unit = "Biotics",
                 Get = c => c.DepositAmount, Set = (c, v) => c.DepositAmount = (int)v },
+            new WaspSetting { Key = "unloadrange", Label = "AI unload range", Description = "Maximum 3D distance from a friendly Bio Cache deposit point for AI Wasps.", Min = 5, Max = 100, UiMax = 100, Unit = "m",
+                Get = c => c.AIUnloadRange, Set = (c, v) => c.AIUnloadRange = (float)v },
             new WaspSetting { Key = "cooldown", Label = "Bio Cache cooldown", Description = "One load per cooldown, counted from the first deposit tick of a visit. Zero disables it.", Min = 0, Max = 3600, UiMax = 600, Unit = "s",
                 Get = c => c.DepositCooldownSeconds, Set = (c, v) => c.DepositCooldownSeconds = (float)v },
             new WaspSetting { Key = "reward", Label = "Wasp delivery reward share", Description = "Fraction of a Wasp delivery credited to the pilot; the team still receives all of it.", Min = 0, Max = 1, UiMax = 1, Step = 0.01, Unit = "fraction",
@@ -71,7 +75,7 @@ namespace Si_Logistics
                     Reply(caller, "Fly a Wasp low over a Biotics patch and hit the ground with the primary attack. Carry up to " + c.MaxCarry +
                         ", then hover still inside your team's Bio Cache to unload. One load per " + c.DepositCooldownSeconds.ToString("0", CultureInfo.InvariantCulture) +
                         " s; you earn " + c.RewardShare.ToString("P0", CultureInfo.InvariantCulture) + " of each delivery as credits.");
-                    if (WaspOrdersInstalled) Reply(caller, "Commander: select AI Wasps and issue Move onto discovered Biotics to start harvesting.");
+                    if (WaspAIHarvestActive) Reply(caller, "Commander: select AI Wasps and issue Move onto discovered Biotics to start harvesting.");
                     Reply(caller, "/wasp: your harvest and cooldown. Admin: /wasp set (list); /wasp set <key> <value> or +N / -N.");
                     return;
                 }
@@ -111,6 +115,7 @@ namespace Si_Logistics
             var c = Cfg.WaspHarvest;
             Reply(caller, "Wasp harvest " + (WaspStandaloneLoaded ? "OFF (standalone Si_WaspHarvest.dll loaded; remove one of the two)" :
                     !WaspHarvestInstalled ? "UNAVAILABLE (see server log)" : WaspHarvestActive ? "ON" : "OFF") +
+                " | AI harvest " + WaspAIHarvestStatus() + ", unload range " + c.AIUnloadRange.ToString("0.##", CultureInfo.InvariantCulture) + " m" +
                 " | carry " + c.MaxCarry + ", " + c.ExtractPerHit + " per hit within " + c.ExtractionRadius.ToString("0.#", CultureInfo.InvariantCulture) + " m" +
                 ", at most " + c.GroundMaxHeight.ToString("0.#", CultureInfo.InvariantCulture) + " m above ground" +
                 " | unload " + c.DepositAmount + " per " + c.TickSeconds.ToString("0.#", CultureInfo.InvariantCulture) + " s, one load per " +
@@ -118,6 +123,9 @@ namespace Si_Logistics
                 " | reward " + c.RewardShare.ToString("P0", CultureInfo.InvariantCulture) +
                 " | equipped (server): " + WaspByClaws.Count + (Cfg.Enabled || !c.Enabled ? "." : " (master Logistics is OFF)."));
         }
+
+        private static string WaspAIHarvestStatus() =>
+            !WaspOrdersInstalled && WaspHarvestActive ? "UNAVAILABLE" : WaspAIHarvestActive ? "ON" : "OFF";
 
         // parts: [/wasp, set, key, value]
         private static void WaspSetCommand(Player caller, string[] parts)
@@ -169,6 +177,7 @@ namespace Si_Logistics
         {
             if (!WaspHarvestInstalled) return;   // /wasp is not registered: offer no rows that cannot work
             export.Status("waspharvest", "Wasp harvest", WaspHarvestActive ? "ON" : "OFF")
+                .Status("wasp-ai-harvest", "AI harvest", WaspAIHarvestStatus())
                 .Status("wasps-equipped", "Wasps equipped (server)", WaspByClaws.Count.ToString(CultureInfo.InvariantCulture))
                 .Action("/wasp", "My Wasp harvest", "Your harvest this round, your Wasp's Bio Cache cooldown and the settings.").Presentation("action", "Wasp harvest")
                 .Action("/wasp help", "Wasp harvest help", "How Wasp harvesting works.").Presentation("action", "Wasp harvest");

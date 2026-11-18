@@ -59,6 +59,8 @@ for `/logistics` and all its subcommands. Setting changes require Admin Mod
 | `/logistics debug on` / `/logistics debug off` | Toggle server diagnostics. |
 | `/wasp` / `/wasp help` | Show your Wasp harvest and Bio Cache cooldown, or how to harvest. |
 | `/wasp set enabled on` / `/wasp set enabled off` | Toggle Wasp harvest. |
+| `/wasp set aiharvest on` / `/wasp set aiharvest off` | Toggle automatic harvesting for AI Wasps. |
+| `/wasp set unloadrange <5..100>` | Set AI Wasp unloading range in metres. Default 30 m. |
 
 For capacities, rates, ranges, reward shares, sound options and scoring commands,
 see the [complete command reference](docs/REFERENCE.md#commands).

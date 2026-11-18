@@ -89,7 +89,7 @@ namespace Si_Logistics
         {
             if (!WaspHarvestInstalled || !Game.GetIsServer()) return;
             bool active = WaspHarvestActive;
-            if (!active) CancelAllWaspJobs();
+            if (!WaspAIHarvestActive) CancelAllWaspJobs();
             foreach (var state in WaspByClaws.Values)
             {
                 try

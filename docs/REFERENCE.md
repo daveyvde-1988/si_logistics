@@ -42,11 +42,13 @@ In the syntax below, choose one value wherever `|` appears; do not type the sepa
 | `/wasp help` | Everyone | How to harvest with a Wasp. |
 | `/wasp set` | Admin | List every Wasp harvest setting with its value and range. |
 | `/wasp set enabled on\|off` | Admin | Wasp harvest sub-switch; default ON. |
+| `/wasp set aiharvest on\|off` | Admin | AI Wasp harvesting and delivery, default ON. |
 | `/wasp set carry <1..100000>` | Admin | Biotics per load, and the most one Bio Cache visit unloads; default `500`. |
 | `/wasp set perhit <1..10000>` | Admin | Biotics taken from the patch per extracting hit; default `20`. |
 | `/wasp set radius <0.5..50>` | Admin | Metres around the hit point searched for Biotics; default `3`. |
 | `/wasp set height <0..100>` | Admin | Greatest height of the hit point above ground that still extracts, in metres; default `4`. |
 | `/wasp set deposit <1..10000>` | Admin | Biotics unloaded per deposit tick; default `50`. |
+| `/wasp set unloadrange <5..100>` | Admin | AI Wasp unloading range from a Bio Cache deposit point, measured in 3D. Default `30` m. |
 | `/wasp set cooldown <0..3600>` | Admin | Seconds per Bio Cache load, counted from the first deposit tick of a visit; zero disables it. Default `30`. |
 | `/wasp set reward <0..1>` | Admin | Pilot's personal-credit share of a Wasp delivery; default `0.4`. |
 | `/wasp set notify <0..60>` | Admin | Minimum seconds between two cargo-bar messages per Wasp; default `2`. |
@@ -190,17 +192,19 @@ A primary-attack hit extracts `ExtractPerHit` Biotics within `ExtractionRadius` 
 The native extraction call debits the patch. Wasp melee damage to friendlies is suppressed while Wasp harvesting is active. Remote hit packets carry no weapon type, so the server filters friendly player hits that fall within replicated melee reach.
 The Wasp's cargo component is private to its claws. FPS recruitment can use the Wasp's normal unit classification, while AntiGrief's Shrimp block still applies.
 
-To start automatic harvesting, select one or more AI Wasps and issue Move onto a discovered Biotics patch. Each Wasp reserves a free patch for travel and harvesting. An assigned or harvesting Shrimp, another Wasp's reservation, or a player harvester at the patch can make it unavailable. The AI releases its reservation before returning to a friendly Bio Cache. It lands, waits for storage and cooldown as needed, fully unloads, then searches for a fresh available patch. A new order, player takeover or either switch turning off ends the assignment.
+With `WaspHarvest.AIHarvest` enabled, select one or more AI Wasps and issue Move onto a discovered Biotics patch. Each Wasp reserves a free patch for travel and harvesting. An assigned or harvesting Shrimp, another Wasp's reservation, or a player harvester at the patch can make it unavailable. The AI releases its patch reservation before returning to a friendly Bio Cache. Returning Wasps hold separate hover positions and unload within `WaspHarvest.AIUnloadRange` of the cache's deposit point, measured in 3D. The default is 30 m. They wait for storage and cooldown as needed, fully unload, then search for a fresh available patch. A new order, player takeover or any of the three switches turning off ends the assignment.
+AI Wasps brake and line up before descending under their own flight controls. They wait for native ground contact before swinging their primary attack, turn toward a live Biotics cell and can walk closer when the claws miss. Only a native melee hit can extract Biotics. With `/logistics debug on`, the server logs job acceptance, descent progress, touchdown and the first successful swing.
 
-To unload, the Wasp must hold still inside a friendly resource deposit point. Among the alien structures only the Bio Cache has one; the Nest does not.
-The native deposit tick moves `DepositAmount` Biotics every `TickSeconds`, limited by remaining team storage. The team receives the full amount.
+Player-flown Wasps unload by holding still inside a friendly Bio Cache's Biotics deposit point. The Nest has no Biotics deposit point.
+Each unload tick moves up to `DepositAmount` Biotics every `TickSeconds`, limited by remaining team storage.
 With `DepositCooldownSeconds` above zero, a visit begins at its first deposit tick and unloads at most `MaxCarry`; the next visit can begin once the cooldown has elapsed since that start. Zero removes both limits.
 
 A visit closes when the cargo is empty, the load is used up or deposit ticks have stopped for about three ticks.
 Each tick accrues the configured `RewardShare` of the accepted Biotics for the pilot who delivered them. It joins the payout queue when the visit closes or the pilot changes. Rejected Biotics return to the Wasp. AI deliveries earn team Biotics. Wasp deliveries do not award round score or count for commander `BalteriumDeposited` rules.
 The pilot sees a cargo bar while harvesting and unloading, at most one line per `NotifyIntervalSeconds`, plus cargo-full, too-high, cooldown and delivery messages.
 
-Setting changes apply to Wasps already in the field. Either switch turning off pauses extraction, unloading and Wasp payouts while preserving cargo and earned credits. Re-enabling equips surviving Wasps and resumes eligible payouts. AI Wasps need a fresh Move to start harvesting again.
+Setting changes apply to Wasps already in the field. Turning off Logistics or Wasp harvest pauses extraction, unloading and Wasp payouts while preserving cargo and earned credits. Re-enabling equips surviving Wasps and resumes eligible payouts. AI Wasps need a fresh Move to start harvesting again.
+Turning only `AIHarvest` off ends active AI jobs, releases their patch reservations, and holds their cargo for a pilot or a later AI assignment. Player-flown harvesting and unloading stay available while the main Wasp switch and Logistics master switch are on.
 At match end the added components are removed from surviving units. `/wasp` totals cover the current round.
 The standalone `Si_WaspHarvest.dll` owns its own switch and `/wasp` command. Logistics yields when the standalone loads or `/wasp` is already registered. Remove the standalone DLL before cutover so the Logistics master switch controls all Wasp harvesting.
 
@@ -423,5 +427,6 @@ Run `/logistics status` with debug enabled before moving a stalled vehicle so it
 2. Hover still inside a Bio Cache. Confirm 50 Biotics per second reach the team, the delivery message, the 40% credit share in the next payout and the 30-second cooldown on an immediate second visit. Confirm the Nest accepts nothing.
 3. Turn each switch off mid-unload. Confirm cargo, team storage and Wasp payouts pause, then resume when both switches are on. Reconnect and do a controlled restart during a Si_Buy outage. Verify each eligible payout settles once after Si_Buy comes back.
 4. With an unmodded remote client, recruit a Wasp into an FPS group, verify Shrimp recruitment is still blocked, and swing at friendly and enemy units to check melee damage.
-5. Select one and then several AI Wasps with Formation and UnitAI enabled. Check occupied and undiscovered patches, depleted patches, a full or destroyed cache, manual takeover and replacement orders. Verify landing, full unload and reservation release before return.
+5. Select one and then several AI Wasps with Formation and UnitAI enabled. Confirm they descend, visibly touch down and deplete a patch through primary melee swings. Check occupied and undiscovered patches, depleted patches, a full or destroyed cache, manual takeover and replacement orders. Verify that multiple Wasps hover at separate points around the same cache and unload in parallel within the configured 3D range. Lower the range while a Wasp is unloading and verify that it repositions if its hover point is outside the new limit. Check that each Wasp fully unloads before returning and releases its patch reservation before approaching the cache.
 6. Start with both Wasp DLLs present. Verify there is one `/wasp` owner and one extraction and deposit per tick. Repeat after removing the standalone DLL for cutover.
+7. Turn off `AIHarvest` during a job and confirm the AI stops with cargo intact and a pilot can still unload it. Turn it on and issue a fresh Move to restart the loop.

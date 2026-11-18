@@ -163,6 +163,7 @@
   },
   "WaspHarvest": {
     "Enabled": true,
+    "AIHarvest": true,
     "Units": [
       "Wasp"
     ],
@@ -171,6 +172,7 @@
     "ExtractionRadius": 3.0,
     "TickSeconds": 1.0,
     "DepositAmount": 50,
+    "AIUnloadRange": 30.0,
     "DepositCooldownSeconds": 30.0,
     "RewardShare": 0.4,
     "GroundMaxHeight": 4.0,
